@@ -4,7 +4,7 @@ pipeline {
     stages {
         stage('Checkout Code') {
             steps {
-                git credentialsId: 'github-creds', url: your-repo'https://github.com/ggyabaah/ai-augmented-devops-pipeline.git'
+                git credentialsId: 'github-creds', url: 'https://github.com/ggyabaah/ai-augmented-devops-pipeline.git'
             }
         }
 
