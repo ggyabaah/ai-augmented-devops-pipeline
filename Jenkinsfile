@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        VENV = 'venv'
+        IMAGE_NAME = 'ai-devops-pipeline'
     }
 
     stages {
@@ -12,28 +12,31 @@ pipeline {
             }
         }
 
-        stage('Set Up Python Virtual Environment') {
+        stage('Build Docker Image') {
             steps {
-                bat 'python -m venv %VENV%'
-                bat '%VENV%\\Scripts\\activate && python -m pip install --upgrade pip'
+                script {
+                    dockerImage = docker.build("${IMAGE_NAME}")
+                }
             }
         }
 
-        stage('Install Dependencies') {
+        stage('Train ML Model in Docker') {
             steps {
-                bat '%VENV%\\Scripts\\activate && pip install -r requirements.txt'
+                script {
+                    dockerImage.inside {
+                        sh 'python model/train.py'
+                    }
+                }
             }
         }
 
-        stage('Train ML Model') {
+        stage('Test ML Model in Docker') {
             steps {
-                bat '%VENV%\\Scripts\\activate && python model\\train.py'
-            }
-        }
-
-        stage('Test ML Model') {
-            steps {
-                bat '%VENV%\\Scripts\\activate && python model\\test.py'
+                script {
+                    dockerImage.inside {
+                        sh 'python model/test.py'
+                    }
+                }
             }
         }
     }
