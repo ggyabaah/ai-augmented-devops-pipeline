@@ -1,15 +1,15 @@
-# Use official Python image
+# Use official lightweight Python image
 FROM python:3.11-slim
 
-# Set working directory
+# Set working directory inside the container
 WORKDIR /app
 
-# Copy files
-COPY . /app
+# Copy only necessary files
+COPY requirements.txt ./
+RUN pip install --upgrade pip && pip install -r requirements.txt
 
-# Install dependencies
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+# Now copy the rest of the source files
+COPY . .
 
-# Run training and test scripts
+# Set default command: Train and test the model
 CMD ["bash", "-c", "python model/train.py && python model/test.py"]

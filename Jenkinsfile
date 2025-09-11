@@ -15,25 +15,16 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    dockerImage = docker.build("${IMAGE_NAME}")
+                    docker.build("${IMAGE_NAME}")
                 }
             }
         }
 
-        stage('Train ML Model in Docker') {
+        stage('Run ML Model in Docker') {
             steps {
                 script {
-                    dockerImage.inside {
+                    docker.image("${IMAGE_NAME}").inside {
                         sh 'python model/train.py'
-                    }
-                }
-            }
-        }
-
-        stage('Test ML Model in Docker') {
-            steps {
-                script {
-                    dockerImage.inside {
                         sh 'python model/test.py'
                     }
                 }
