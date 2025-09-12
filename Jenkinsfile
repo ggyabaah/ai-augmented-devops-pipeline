@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = 'ai-devops-pipeline'
+        IMAGE_NAME = 'ai-devops-model'
     }
 
     stages {
@@ -15,16 +15,25 @@ pipeline {
         stage('Build Docker Image') {
             steps {
                 script {
-                    docker.build("${IMAGE_NAME}")
+                    dockerImage = docker.build("${IMAGE_NAME}")
                 }
             }
         }
 
-        stage('Run ML Model in Docker') {
+        stage('Train ML Model in Docker') {
             steps {
                 script {
-                    docker.image("${IMAGE_NAME}").inside {
+                    dockerImage.inside {
                         sh 'python model/train.py'
+                    }
+                }
+            }
+        }
+
+        stage('Test ML Model in Docker') {
+            steps {
+                script {
+                    dockerImage.inside {
                         sh 'python model/test.py'
                     }
                 }
