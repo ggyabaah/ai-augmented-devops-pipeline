@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        IMAGE_NAME = 'ai-devops-pipeline'
+        DOCKER_IMAGE = 'ai-devops-pipeline'
     }
 
     stages {
@@ -14,19 +14,29 @@ pipeline {
 
         stage('Build Docker Image') {
             steps {
-                bat "docker build -t %IMAGE_NAME% ."
+                script {
+                    dockerImage = docker.build("${DOCKER_IMAGE}")
+                }
             }
         }
 
         stage('Train ML Model in Docker') {
             steps {
-                bat "docker run --rm %IMAGE_NAME% python model/train.py"
+                script {
+                    dockerImage.inside {
+                        sh 'python scripts/train.py'
+                    }
+                }
             }
         }
 
         stage('Test ML Model in Docker') {
             steps {
-                bat "docker run --rm %IMAGE_NAME% python model/test.py"
+                script {
+                    dockerImage.inside {
+                        sh 'python scripts/test.py'
+                    }
+                }
             }
         }
     }
@@ -34,6 +44,9 @@ pipeline {
     post {
         always {
             echo 'Jenkins pipeline execution complete.'
+        }
+        failure {
+            echo 'Pipeline failed. Please check logs.'
         }
     }
 }
