@@ -12,16 +12,22 @@ pipeline {
             }
         }
 
-        stage('Recreate Scripts Folder') {
+        stage('Recreate Folders & Scripts') {
             steps {
                 bat '''
+                REM --- Ensure scripts folder exists ---
                 if not exist scripts mkdir scripts
-                echo import os > scripts\\train.py
-                echo import joblib >> scripts\\train.py
+
+                REM --- Ensure model folder exists ---
+                if not exist model mkdir model
+
+                REM --- Create train.py ---
+                echo import joblib > scripts\\train.py
                 echo from sklearn.datasets import load_iris >> scripts\\train.py
                 echo from sklearn.ensemble import RandomForestClassifier >> scripts\\train.py
                 echo from sklearn.model_selection import train_test_split >> scripts\\train.py
                 echo from sklearn.metrics import accuracy_score >> scripts\\train.py
+                echo import os >> scripts\\train.py
                 echo iris = load_iris() >> scripts\\train.py
                 echo X_train, X_test, y_train, y_test = train_test_split(iris.data, iris.target, test_size=0.2, random_state=42) >> scripts\\train.py
                 echo model = RandomForestClassifier(n_estimators=100, random_state=42) >> scripts\\train.py
@@ -29,6 +35,7 @@ pipeline {
                 echo joblib.dump(model, "model/random_forest_model.pkl") >> scripts\\train.py
                 echo print("[INFO] Model trained and saved.") >> scripts\\train.py
 
+                REM --- Create test.py ---
                 echo import joblib > scripts\\test.py
                 echo from sklearn.datasets import load_iris >> scripts\\test.py
                 echo from sklearn.metrics import accuracy_score >> scripts\\test.py
