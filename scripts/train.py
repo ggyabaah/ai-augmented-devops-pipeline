@@ -22,12 +22,10 @@ accuracy = accuracy_score(y_test, predictions)
 print(f"[INFO] Model Accuracy: {accuracy:.2f}")
 
 # --- SAVE THE MODEL ---
-model_dir = os.path.join(os.path.dirname(__file__), "..", "model")
-os.makedirs(model_dir, exist_ok=True)
-
-model_path = os.path.join(model_dir, "random_forest_model.pkl")
+os.makedirs("model", exist_ok=True)   # ensure folder exists
+model_path = os.path.join("model", "random_forest_model.pkl")
 joblib.dump(model, model_path)
 
 print(f"[INFO] Model saved at: {model_path}")
-time.sleep(2)
+time.sleep(1)
 print("[INFO] Training completed successfully.")

@@ -17,4 +17,9 @@ os.makedirs(model_dir, exist_ok=True)
 model_path = os.path.join(model_dir, "random_forest_model.pkl")
 joblib.dump(model, model_path)
 
+# Dummy model (not trained, just a placeholder example)
+clf = RandomForestClassifier()
+joblib.dump(clf, "model/random_forest_model.pkl")
+print("[INFO] Dummy model saved at model/random_forest_model.pkl")
+
 print(f"[INFO] Model saved at: {model_path}")
