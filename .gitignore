@@ -1,0 +1,6 @@
+# Ignore Python cache and model files
+__pycache__/
+*.pkl
+*.log
+.venv/
+venv/
