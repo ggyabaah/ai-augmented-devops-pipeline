@@ -46,8 +46,9 @@ pipeline {
             steps {
                 script {
                     sh 'echo $DOCKER_HUB_PASS | docker login -u $DOCKER_HUB_USER --password-stdin'
-                    sh 'docker build -t $IMAGE_NAME:$BUILD_NUMBER .'
+                    sh 'docker build -t $IMAGE_NAME:$BUILD_NUMBER -t $IMAGE_NAME:latest .'
                     sh 'docker push $IMAGE_NAME:$BUILD_NUMBER'
+                    sh 'docker push $IMAGE_NAME:latest'
                 }
             }
         }
