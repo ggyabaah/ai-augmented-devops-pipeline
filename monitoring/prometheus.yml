@@ -23,4 +23,4 @@ scrape_configs:
   # Scrape metrics from Kubernetes NodePort service
   - job_name: "ai-augmented-devops"c
     static_configs:
-      - targets: ["<minikube-ip>:30080"]
+      - targets: ["192.168.49.2:30080"]
