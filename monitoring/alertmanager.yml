@@ -1,0 +1,17 @@
+route:
+  receiver: default
+  group_by: ["alertname"]
+  group_wait: 10s
+  group_interval: 1m
+  repeat_interval: 4h
+
+receivers:
+  - name: default
+    # Example email config (fill in real values or switch to Slack)
+    email_configs:
+      - to: "you@example.com"
+        from: "alertmanager@example.com"
+        smarthost: "smtp.example.com:587"
+        auth_username: "alertuser"
+        auth_password: "REPLACE_ME"
+        require_tls: true

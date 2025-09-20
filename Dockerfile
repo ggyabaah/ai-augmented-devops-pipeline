@@ -4,12 +4,12 @@ FROM python:3.11-slim
 # Set working directory
 WORKDIR /app
 
-# Copy files
+# Copy project files
 COPY . /app
 
 # Install dependencies
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Default command: train + test
-CMD ["bash", "-c", "python scripts/train.py && python scripts/test.py"]
+# Default command (can be overridden in docker-compose.yml)
+CMD ["python", "scripts/train.py"]

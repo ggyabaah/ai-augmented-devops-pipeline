@@ -1,0 +1,44 @@
+groups:
+  - name: ml-service.rules
+    interval: 30s
+    rules:
+      - alert: TrainerDown
+        expr: up{job="trainer"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Trainer is down"
+          description: "Prometheus cannot scrape trainer for 1m"
+
+      - alert: TesterDown
+        expr: up{job="tester"} == 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: "Tester is down"
+          description: "Prometheus cannot scrape tester for 1m"
+
+
+      - alert: NoTrainingActivity
+        expr: rate(model_training_runs[10m]) == 0
+        for: 10m
+        labels: {severity: warning}
+        annotations:
+          summary: "No training in the last 10 minutes"
+          description: "model_training_runs has not increased for 10m"
+
+      - alert: LowTestAccuracy
+        expr: (model_test_accuracy * 100) < 90
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "Test accuracy below 90% for 2m"
+          description: "Current accuracy: {{ $value }}%"
+
+      - alert: SlowTrainingP95
+        expr: histogram_quantile(0.95, rate(train_duration_seconds_bucket[5m])) > 5
+        for: 2m
+        labels: {severity: warning}
+        annotations:
+          summary: "Training p95 > 5s"
+          description: "p95 training duration above 5 seconds"

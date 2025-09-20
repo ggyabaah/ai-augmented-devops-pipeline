@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-augmented-devops-service
+  labels:
+    app: ai-augmented-devops
+spec:
+  type: NodePort   # Exposes service outside the cluster (good for Minikube or local dev)
+  selector:
+    app: ai-augmented-devops
+  ports:
+    - name: http
+      protocol: TCP
+      port: 8000        # Service port (what clients use)
+      targetPort: 8000  # Container port inside the pod
+      nodePort: 30080   # External port on the node (http://localhost:30080)

@@ -2,68 +2,76 @@ pipeline {
     agent any
 
     environment {
-        PYTHON_EXE = '"C:\\Program Files\\Python313\\python.exe"'
+        // GitHub and Docker credentials stored in Jenkins
+        GIT_CREDENTIALS = 'github-dreds'
+        DOCKER_HUB_USER = credentials('docker-hub-username')
+        DOCKER_HUB_PASS = credentials('docker-hub-password')
+
+        // Docker Hub image repo
+        IMAGE_NAME = "ggyabaah/ai-augmented-devops"
+
+        // Python interpreter path
+        PYTHON_PATH = "C:\\Program Files\\Python313\\python.exe"
+
+        // Compose project name for orchestration clarity
+        COMPOSE_PROJECT_NAME = "ai-devops-pipeline"
     }
 
     stages {
         stage('Checkout Code') {
             steps {
-                git branch: 'main', credentialsId: 'github-dreds', url: 'https://github.com/ggyabaah/ai-augmented-devops-pipeline.git'
-            }
-        }
-
-        stage('Recreate Folders & Scripts') {
-            steps {
-                bat '''
-                REM --- Ensure scripts folder exists ---
-                if not exist scripts mkdir scripts
-
-                REM --- Ensure model folder exists ---
-                if not exist model mkdir model
-
-                REM --- Create train.py ---
-                echo import joblib > scripts\\train.py
-                echo from sklearn.datasets import load_iris >> scripts\\train.py
-                echo from sklearn.ensemble import RandomForestClassifier >> scripts\\train.py
-                echo from sklearn.model_selection import train_test_split >> scripts\\train.py
-                echo from sklearn.metrics import accuracy_score >> scripts\\train.py
-                echo import os >> scripts\\train.py
-                echo iris = load_iris() >> scripts\\train.py
-                echo X_train, X_test, y_train, y_test = train_test_split(iris.data, iris.target, test_size=0.2, random_state=42) >> scripts\\train.py
-                echo model = RandomForestClassifier(n_estimators=100, random_state=42) >> scripts\\train.py
-                echo model.fit(X_train, y_train) >> scripts\\train.py
-                echo joblib.dump(model, "model/random_forest_model.pkl") >> scripts\\train.py
-                echo print("[INFO] Model trained and saved.") >> scripts\\train.py
-
-                REM --- Create test.py ---
-                echo import joblib > scripts\\test.py
-                echo from sklearn.datasets import load_iris >> scripts\\test.py
-                echo from sklearn.metrics import accuracy_score >> scripts\\test.py
-                echo iris = load_iris() >> scripts\\test.py
-                echo X, y = iris.data, iris.target >> scripts\\test.py
-                echo model = joblib.load("model/random_forest_model.pkl") >> scripts\\test.py
-                echo predictions = model.predict(X) >> scripts\\test.py
-                echo print("[INFO] Accuracy:", accuracy_score(y, predictions)) >> scripts\\test.py
-                '''
+                git branch: 'main', credentialsId: "${GIT_CREDENTIALS}", url: 'https://github.com/ggyabaah/ai-augmented-devops-pipeline.git'
             }
         }
 
         stage('Install Dependencies') {
             steps {
-                bat "${PYTHON_EXE} -m pip install --upgrade pip"
-                bat "${PYTHON_EXE} -m pip install -r requirements.txt"
+                sh '"${PYTHON_PATH}" -m pip install -r requirements.txt'
             }
         }
 
-        stage('Train ML Model') {
+        stage('Train Model') {
             steps {
-                bat "${PYTHON_EXE} scripts\\train.py"
+                sh '"${PYTHON_PATH}" scripts/train.py'
             }
         }
 
-        stage('Test ML Model') {
+        stage('Test Model') {
             steps {
-                bat "${PYTHON_EXE} scripts\\test.py"
+                sh '"${PYTHON_PATH}" scripts/test.py'
+            }
+        }
+
+        stage('Docker Build & Push') {
+            steps {
+                script {
+                    sh 'echo $DOCKER_HUB_PASS | docker login -u $DOCKER_HUB_USER --password-stdin'
+                    sh 'docker build -t $IMAGE_NAME:$BUILD_NUMBER .'
+                    sh 'docker push $IMAGE_NAME:$BUILD_NUMBER'
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                sh 'kubectl apply -f k8s/deployment.yml'
+            }
+        }
+
+        stage('Docker Compose Orchestration') {
+            steps {
+                // Stop and clean up old containers
+                bat 'docker-compose down || exit 0'
+
+                // Start fresh with new containers
+                bat 'docker-compose up --build -d'
+            }
+        }
+
+        stage('Verify Trainer Service') {
+            steps {
+                // Run test container against trainer
+                bat 'docker-compose run --rm tester'
             }
         }
     }
@@ -71,6 +79,7 @@ pipeline {
     post {
         always {
             echo 'Jenkins pipeline execution complete.'
+            bat 'docker-compose down || exit 0'
         }
     }
 }

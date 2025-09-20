@@ -1,0 +1,26 @@
+global:
+  scrape_interval: 15s
+
+rule_files:
+  - /etc/prometheus/rules.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # Scrape metrics from trainer container (local docker-compose)
+  - job_name: "trainer"
+    static_configs:
+      - targets: ["trainer:8000"]
+
+  # Scrape metrics from tester container (local docker-compose)
+  - job_name: "tester"
+    static_configs:
+      - targets: ["tester:8001"]
+
+  # Scrape metrics from Kubernetes NodePort service
+  - job_name: "ai-augmented-devops"c
+    static_configs:
+      - targets: ["<minikube-ip>:30080"]
