@@ -7,6 +7,7 @@ networks:
 # Named volume so trainer & tester share the saved model
 volumes:
   model-store:
+  grafana-data:   # persistent storage for Grafana dashboards/settings
 
 services:
   trainer:
@@ -47,8 +48,7 @@ services:
       --storage.tsdb.retention.time=15d
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      # Create ./monitoring/rules.yml (optional) if you want alert rules loaded:
-      - ./monitoring/rules.yml:/etc/prometheus/rules.yml:ro
+      - ./monitoring/rules.yml:/etc/prometheus/rules.yml:ro  # optional rules
       - ./prometheus-data:/prometheus
     ports:
       - "9090:9090"
@@ -71,16 +71,18 @@ services:
     restart: unless-stopped
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.1.0
     container_name: grafana
     depends_on:
       - prometheus
     ports:
       - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
-      - ./grafana-data:/var/lib/grafana
-      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
-      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
-      - ./grafana/dashboards:/var/lib/grafana/dashboards
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
     networks: [monitoring]
     restart: unless-stopped

@@ -1,0 +1,101 @@
+{
+  "id": null,
+  "uid": "ai-devops",
+  "title": "AI Augmented DevOps Dashboard",
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "panels": [
+    {
+      "type": "stat",
+      "title": "Service Health - Trainer",
+      "targets": [
+        {
+          "expr": "up{job=\"trainer\"}",
+          "legendFormat": "Trainer"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 3 }
+    },
+    {
+      "type": "stat",
+      "title": "Service Health - Tester",
+      "targets": [
+        {
+          "expr": "up{job=\"tester\"}",
+          "legendFormat": "Tester"
+        }
+      ],
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 3 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Requests per Second",
+      "targets": [
+        {
+          "expr": "rate(model_test_requests_total[1m])",
+          "legendFormat": "Tester Requests"
+        },
+        {
+          "expr": "rate(model_training_iterations_total[1m])",
+          "legendFormat": "Trainer Iterations"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 3, "w": 12, "h": 6 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Error Rate",
+      "targets": [
+        {
+          "expr": "rate(model_errors_total[5m])",
+          "legendFormat": "Errors"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 9, "w": 12, "h": 6 }
+    },
+    {
+      "type": "timeseries",
+      "title": "Latency (p95)",
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(request_latency_seconds_bucket[5m])) by (le))",
+          "legendFormat": "p95 Latency"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 15, "w": 12, "h": 6 }
+    },
+    {
+      "type": "gauge",
+      "title": "Model Accuracy",
+      "targets": [
+        {
+          "expr": "avg(model_accuracy)",
+          "legendFormat": "Accuracy"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 21, "w": 6, "h": 6 }
+    },
+    {
+      "type": "table",
+      "title": "Build Info",
+      "targets": [
+        {
+          "expr": "model_build_info"
+        }
+      ],
+      "gridPos": { "x": 6, "y": 21, "w": 6, "h": 6 }
+    },
+    {
+      "type": "stat",
+      "title": "Uptime",
+      "targets": [
+        {
+          "expr": "time() - process_start_time_seconds",
+          "legendFormat": "Uptime"
+        }
+      ],
+      "gridPos": { "x": 0, "y": 27, "w": 12, "h": 3 }
+    }
+  ]
+}
