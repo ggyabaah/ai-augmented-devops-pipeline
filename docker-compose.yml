@@ -51,7 +51,7 @@ services:
       - ./monitoring/rules.yml:/etc/prometheus/rules.yml:ro  # optional rules
       - ./prometheus-data:/prometheus
     ports:
-      - "9090:9090"
+      - "9091:9090"
     depends_on:
       - trainer
       - tester
@@ -76,7 +76,7 @@ services:
     depends_on:
       - prometheus
     ports:
-      - "3000:3000"
+      - "3001:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
