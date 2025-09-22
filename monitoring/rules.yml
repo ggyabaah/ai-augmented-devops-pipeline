@@ -1,0 +1,43 @@
+groups:
+  - name: ai-augmented-devops-alerts
+    interval: 15s
+    rules:
+      # 🔴 Alert if trainer is down
+      - alert: TrainerDown
+        expr: up{job="trainer"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Trainer service is down"
+          description: "Prometheus could not scrape metrics from trainer for 30 seconds."
+
+      # 🔴 Alert if tester is down
+      - alert: TesterDown
+        expr: up{job="tester"} == 0
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "Tester service is down"
+          description: "Prometheus could not scrape metrics from tester for 30 seconds."
+
+      # ⚠️ Alert if error rate is high
+      - alert: HighErrorRate
+        expr: rate(model_errors_total[5m]) > 0.1
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is above 0.1 errors/sec for the last 5 minutes."
+
+      # ⚠️ Alert if accuracy drops
+      - alert: LowModelAccuracy
+        expr: model_accuracy < 0.7
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Model accuracy is low"
+          description: "Model accuracy fell below 70%."

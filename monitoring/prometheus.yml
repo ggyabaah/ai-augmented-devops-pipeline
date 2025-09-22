@@ -10,17 +10,22 @@ alerting:
         - targets: ["alertmanager:9093"]
 
 scrape_configs:
-  # Scrape metrics from trainer container (local docker-compose)
+  # Scrape Prometheus itself
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Scrape metrics from trainer container (Docker Compose)
   - job_name: "trainer"
     static_configs:
       - targets: ["trainer:8000"]
 
-  # Scrape metrics from tester container (local docker-compose)
+  # Scrape metrics from tester container (Docker Compose)
   - job_name: "tester"
     static_configs:
       - targets: ["tester:8001"]
 
-  # Scrape metrics from Kubernetes NodePort service
-  - job_name: "ai-augmented-devops"c
+  # Scrape metrics from Kubernetes NodePort service (if running in Minikube)
+  - job_name: "ai-augmented-devops"
     static_configs:
       - targets: ["192.168.49.2:30080"]
