@@ -1,13 +1,12 @@
-version: "3.9"
-
 networks:
   monitoring:
     name: aiartefact_monitoring
 
-# Named volume so trainer & tester share the saved model
+# Named volumes for persistent storage
 volumes:
   model-store:
-  grafana-data:   # persistent storage for Grafana dashboards/settings
+  grafana-data:
+  prometheus-data:
 
 services:
   trainer:
@@ -48,8 +47,8 @@ services:
       --storage.tsdb.retention.time=15d
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./monitoring/rules.yml:/etc/prometheus/rules.yml:ro  # optional rules
-      - ./prometheus-data:/prometheus
+      - ./monitoring/rules.yml:/etc/prometheus/rules.yml:ro
+      - prometheus-data:/prometheus      # named volume (fixes permission errors)
     ports:
       - "9091:9090"
     depends_on:
@@ -81,7 +80,7 @@ services:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
-      - grafana-data:/var/lib/grafana
+      - grafana-data:/var/lib/grafana    # named volume (fixes permission errors)
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
     networks: [monitoring]

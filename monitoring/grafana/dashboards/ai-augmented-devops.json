@@ -1,101 +1,83 @@
 {
   "id": null,
-  "uid": "ai-devops",
   "title": "AI Augmented DevOps Dashboard",
   "timezone": "browser",
-  "schemaVersion": 39,
-  "version": 1,
+  "schemaVersion": 36,
+  "version": 2,
+  "refresh": "10s",
   "panels": [
     {
-      "type": "stat",
       "title": "Service Health - Trainer",
-      "targets": [
-        {
-          "expr": "up{job=\"trainer\"}",
-          "legendFormat": "Trainer"
-        }
-      ],
-      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 3 }
-    },
-    {
       "type": "stat",
-      "title": "Service Health - Tester",
       "targets": [
-        {
-          "expr": "up{job=\"tester\"}",
-          "legendFormat": "Tester"
-        }
-      ],
-      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 3 }
+        { "expr": "up{job=\"trainer\"}" }
+      ]
     },
     {
-      "type": "timeseries",
+      "title": "Service Health - Tester",
+      "type": "stat",
+      "targets": [
+        { "expr": "up{job=\"tester\"}" }
+      ]
+    },
+    {
       "title": "Requests per Second",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(model_training_requests_total[1m])", "legendFormat": "Trainer" },
+        { "expr": "rate(model_test_requests_total[1m])", "legendFormat": "Tester" }
+      ]
+    },
+    {
+      "title": "Error Rate",
+      "type": "timeseries",
+      "targets": [
+        { "expr": "rate(model_training_errors_total[5m])", "legendFormat": "Trainer Errors" },
+        { "expr": "rate(model_test_errors_total[5m])", "legendFormat": "Tester Errors" }
+      ]
+    },
+    {
+      "title": "Latency (p95)",
+      "type": "timeseries",
       "targets": [
         {
-          "expr": "rate(model_test_requests_total[1m])",
-          "legendFormat": "Tester Requests"
+          "expr": "histogram_quantile(0.95, rate(request_latency_seconds_bucket{job=\"trainer\"}[5m]))",
+          "legendFormat": "Trainer p95"
         },
         {
-          "expr": "rate(model_training_iterations_total[1m])",
-          "legendFormat": "Trainer Iterations"
+          "expr": "histogram_quantile(0.95, rate(request_latency_seconds_bucket{job=\"tester\"}[5m]))",
+          "legendFormat": "Tester p95"
         }
-      ],
-      "gridPos": { "x": 0, "y": 3, "w": 12, "h": 6 }
+      ]
     },
     {
-      "type": "timeseries",
-      "title": "Error Rate",
-      "targets": [
-        {
-          "expr": "rate(model_errors_total[5m])",
-          "legendFormat": "Errors"
-        }
-      ],
-      "gridPos": { "x": 0, "y": 9, "w": 12, "h": 6 }
-    },
-    {
-      "type": "timeseries",
-      "title": "Latency (p95)",
-      "targets": [
-        {
-          "expr": "histogram_quantile(0.95, sum(rate(request_latency_seconds_bucket[5m])) by (le))",
-          "legendFormat": "p95 Latency"
-        }
-      ],
-      "gridPos": { "x": 0, "y": 15, "w": 12, "h": 6 }
-    },
-    {
-      "type": "gauge",
       "title": "Model Accuracy",
+      "type": "gauge",
       "targets": [
-        {
-          "expr": "avg(model_accuracy)",
-          "legendFormat": "Accuracy"
-        }
+        { "expr": "model_training_accuracy", "legendFormat": "Trainer Accuracy" },
+        { "expr": "model_test_accuracy", "legendFormat": "Tester Accuracy" }
       ],
-      "gridPos": { "x": 0, "y": 21, "w": 6, "h": 6 }
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1
+        }
+      }
     },
     {
-      "type": "table",
       "title": "Build Info",
+      "type": "table",
       "targets": [
-        {
-          "expr": "model_build_info"
-        }
-      ],
-      "gridPos": { "x": 6, "y": 21, "w": 6, "h": 6 }
+        { "expr": "model_build_info" }
+      ]
     },
     {
-      "type": "stat",
       "title": "Uptime",
+      "type": "stat",
       "targets": [
-        {
-          "expr": "time() - process_start_time_seconds",
-          "legendFormat": "Uptime"
-        }
-      ],
-      "gridPos": { "x": 0, "y": 27, "w": 12, "h": 3 }
+        { "expr": "time() - process_start_time_seconds{job=\"trainer\"}", "legendFormat": "Trainer Uptime" },
+        { "expr": "time() - process_start_time_seconds{job=\"tester\"}", "legendFormat": "Tester Uptime" }
+      ]
     }
   ]
 }
