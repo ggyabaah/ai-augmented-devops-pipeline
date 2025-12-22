@@ -1,6 +1,7 @@
 # scripts/test.py
 import os
 import time
+import argparse
 import joblib
 from prometheus_client import start_http_server, Counter, Gauge, Histogram
 from sklearn.datasets import load_iris
@@ -21,11 +22,15 @@ request_latency = Histogram("request_latency_seconds", "Test request latency in 
 # Metadata
 VERSION = os.getenv("VERSION", "dev")
 GIT_SHA = os.getenv("GIT_SHA", "local")
-MODEL_PATH = os.path.join(os.getenv("MODEL_DIR", "model"), "random_forest_model.pkl")
+MODEL_DIR = os.getenv("MODEL_DIR", "model")
+MODEL_PATH = os.path.join(MODEL_DIR, "random_forest_model.pkl")
+
+DEFAULT_INTERVAL_SECONDS = int(os.getenv("TEST_INTERVAL_SECONDS", "60"))
+DEFAULT_PORT = int(os.getenv("TEST_METRICS_PORT", "8001"))
 
 def run_test_once():
     start = time.perf_counter()
-    test_requests.inc()  # increment requests counter
+    test_requests.inc()
 
     try:
         if not os.path.exists(MODEL_PATH):
@@ -33,19 +38,15 @@ def run_test_once():
             test_errors.inc()
             return
 
-        # Load model
         model = joblib.load(MODEL_PATH)
 
-        # Load dataset and split
         iris = load_iris()
         _, X_test, _, y_test = train_test_split(
             iris.data, iris.target, test_size=0.2, random_state=42
         )
 
-        # Run evaluation
         acc = accuracy_score(y_test, model.predict(X_test))
 
-        # Update metrics
         test_counter.inc()
         test_accuracy.set(acc)
         test_duration.observe(time.perf_counter() - start)
@@ -58,15 +59,30 @@ def run_test_once():
         test_errors.inc()
 
     finally:
-        duration = time.perf_counter() - start
-        request_latency.observe(duration)
+        request_latency.observe(time.perf_counter() - start)
 
-if __name__ == "__main__":
-    start_http_server(8001)
-    print("[INFO] Prometheus test metrics exposed on port 8001 (/metrics)")
-    print(f"[INFO] Build info → VERSION={VERSION}, GIT_SHA={GIT_SHA}")
+def main():
+    parser = argparse.ArgumentParser(description="Model tester service with Prometheus metrics")
+    parser.add_argument("--once", action="store_true", help="Run one evaluation and exit")
+    parser.add_argument("--no-server", action="store_true", help="Do not start Prometheus HTTP server")
+    parser.add_argument("--interval", type=int, default=DEFAULT_INTERVAL_SECONDS, help="Seconds between runs")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Metrics port")
+    args = parser.parse_args()
 
-    # Run test periodically
+    if not args.no_server:
+        start_http_server(args.port)
+        print(f"[INFO] Prometheus test metrics exposed on port {args.port} (/metrics)")
+
+    print(f"[INFO] Build info: VERSION={VERSION}, GIT_SHA={GIT_SHA}")
+    print(f"[INFO] Model path: {MODEL_PATH}")
+
+    if args.once:
+        run_test_once()
+        return
+
     while True:
         run_test_once()
-        time.sleep(60)  # test every 1 minute
+        time.sleep(max(1, args.interval))
+
+if __name__ == "__main__":
+    main()
