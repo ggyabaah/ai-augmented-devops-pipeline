@@ -1,20 +1,9 @@
-﻿# Python
+﻿venv/
+.venv/
 __pycache__/
 *.pyc
-.venv/
-.env
-
-# Models and data
-model/
-*.pkl
-*.joblib
-
-# Docker/Grafana
+prometheus-data/
 grafana-data/
-*.log
-
-# OS/editor noise
+model-store/
 .DS_Store
-Thumbs.db
-.idea/
-.vscode/
+.env
