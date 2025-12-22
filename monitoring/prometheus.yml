@@ -10,22 +10,30 @@ alerting:
         - targets: ["alertmanager:9093"]
 
 scrape_configs:
-  # Scrape Prometheus itself
+  # ✅ Scrape Prometheus itself (inside the container)
   - job_name: "prometheus"
     static_configs:
-      - targets: ["localhost:9090"]
+      - targets: ["prometheus:9090"]
 
-  # Scrape metrics from trainer container (Docker Compose)
+  # ✅ Trainer metrics (Docker Compose)
   - job_name: "trainer"
+    metrics_path: /metrics
     static_configs:
       - targets: ["trainer:8000"]
 
-  # Scrape metrics from tester container (Docker Compose)
+  # ✅ Tester metrics (Docker Compose)
   - job_name: "tester"
+    metrics_path: /metrics
     static_configs:
       - targets: ["tester:8001"]
 
-  # Scrape metrics from Kubernetes NodePort service (if running in Minikube)
-  - job_name: "ai-augmented-devops"
+  # ✅ NEW: Pushgateway (for deployment frequency metric from Jenkins)
+  - job_name: "pushgateway"
+    static_configs:
+      - targets: ["pushgateway:9091"]
+
+  # ✅ OPTIONAL: Kubernetes NodePort (only keep if Minikube is running AND reachable)
+  - job_name: "ai-augmented-devops-k8s"
+    metrics_path: /metrics
     static_configs:
       - targets: ["192.168.49.2:30080"]

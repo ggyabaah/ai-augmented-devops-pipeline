@@ -2,7 +2,6 @@ networks:
   monitoring:
     name: aiartefact_monitoring
 
-# Named volumes for persistent storage
 volumes:
   model-store:
   grafana-data:
@@ -19,7 +18,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - model-store:/app/model           # trainer writes model here
+      - model-store:/app/model
     networks: [monitoring]
     restart: unless-stopped
 
@@ -30,11 +29,20 @@ services:
     environment:
       - VERSION=${VERSION:-dev}
       - GIT_SHA=${GIT_SHA:-local}
-      - MODEL_DIR=/app/model             # tester reads model from the shared volume
+      - MODEL_DIR=/app/model
     ports:
       - "8001:8001"
     volumes:
-      - model-store:/app/model           # shared with trainer
+      - model-store:/app/model
+    networks: [monitoring]
+    restart: unless-stopped
+
+  # ✅ NEW: Pushgateway for deployment-event metrics (Deployment Frequency)
+  pushgateway:
+    image: prom/pushgateway:latest
+    container_name: pushgateway
+    ports:
+      - "9091:9091"
     networks: [monitoring]
     restart: unless-stopped
 
@@ -48,13 +56,15 @@ services:
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./monitoring/rules.yml:/etc/prometheus/rules.yml:ro
-      - prometheus-data:/prometheus      # named volume (fixes permission errors)
+      - prometheus-data:/prometheus
     ports:
+      # ✅ FIX: expose Prometheus on 9090 (standard)
       - "9091:9090"
     depends_on:
       - trainer
       - tester
       - alertmanager
+      - pushgateway
     networks: [monitoring]
     restart: unless-stopped
 
@@ -75,12 +85,13 @@ services:
     depends_on:
       - prometheus
     ports:
+      # ✅ FIX: keep Grafana on 3000 unless you have a reason not to
       - "3001:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
     volumes:
-      - grafana-data:/var/lib/grafana    # named volume (fixes permission errors)
+      - grafana-data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
     networks: [monitoring]
