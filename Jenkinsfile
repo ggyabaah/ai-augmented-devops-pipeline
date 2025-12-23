@@ -20,7 +20,6 @@ pipeline {
 
     // Compose
     COMPOSE_PROJECT_NAME = 'ai-devops-pipeline'
-    // IMPORTANT: do NOT store %WORKSPACE% inside ENV_FILE. CMD won’t expand nested vars.
     ENV_FILE             = '.env'
     CURL_IMAGE           = 'curlimages/curl:8.10.1'
   }
@@ -132,7 +131,6 @@ pipeline {
 
     stage('Compose Down (safe)') {
       steps {
-        // CMD supports ||, PowerShell doesn't. This is a bat step so we are fine.
         bat '''
           cd /d "%WORKSPACE%"
           docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" down --remove-orphans || echo Nothing to remove.
@@ -150,20 +148,35 @@ pipeline {
       }
     }
 
-    stage('Pre-pull Curl (avoids verify hang)') {
+    stage('Pre-pull Curl (fast)') {
       options { timeout(time: 3, unit: 'MINUTES') }
       steps {
+        bat 'docker pull %CURL_IMAGE%'
+      }
+    }
+
+    stage('Verify Containers Running (fast)') {
+      options { timeout(time: 2, unit: 'MINUTES') }
+      steps {
         bat '''
-          docker pull %CURL_IMAGE%
+          cd /d "%WORKSPACE%"
+          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" ps
+
+          REM Fail if any service is not running
+          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" ps --status running | findstr /I "trainer tester prometheus grafana pushgateway alertmanager" > NUL
+          if errorlevel 1 (
+            echo ERROR: One or more services are not running.
+            docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" ps
+            exit /b 1
+          )
         '''
       }
     }
 
-    stage('Verify Metrics Endpoints (fast)') {
+    stage('Verify Metrics Endpoints (no hang)') {
       options { timeout(time: 3, unit: 'MINUTES') }
       steps {
-        // Verify from inside the Compose network so host port clashes don't matter.
-        // Keep output short (don’t dump full /metrics into the Jenkins console).
+        // Use files + PowerShell to print first lines (no "more" pager).
         bat '''
           cd /d "%WORKSPACE%"
           set NET=%COMPOSE_PROJECT_NAME%_monitoring
@@ -173,12 +186,12 @@ pipeline {
 
           echo === Trainer metrics (first 25 lines) ===
           docker run --rm --network %NET% %CURL_IMAGE% -sS --fail --max-time 10 http://trainer:8000/metrics > trainer_metrics.txt
-          type trainer_metrics.txt | more
+          powershell -NoProfile -Command "Get-Content trainer_metrics.txt | Select-Object -First 25"
           del trainer_metrics.txt
 
           echo === Tester metrics (first 25 lines) ===
           docker run --rm --network %NET% %CURL_IMAGE% -sS --fail --max-time 10 http://tester:8001/metrics > tester_metrics.txt
-          type tester_metrics.txt | more
+          powershell -NoProfile -Command "Get-Content tester_metrics.txt | Select-Object -First 25"
           del tester_metrics.txt
 
           echo === Pushgateway ready ===
@@ -190,10 +203,12 @@ pipeline {
     stage('Verify Tester One-Shot (no hang)') {
       options { timeout(time: 5, unit: 'MINUTES') }
       steps {
-        // One-shot run so Jenkins doesn’t hang on long-running services.
+        // Key changes:
+        // -T disables pseudo-TTY (common Jenkins hang cause)
+        // one-shot flags ensure script exits
         bat '''
           cd /d "%WORKSPACE%"
-          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" run --rm tester python -u scripts/test.py --once --no-server
+          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" run --rm -T tester python -u scripts/test.py --once --no-server
         '''
       }
     }
