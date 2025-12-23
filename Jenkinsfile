@@ -1,66 +1,88 @@
 pipeline {
   agent any
 
+  options {
+    timestamps()
+    disableConcurrentBuilds()
+    buildDiscarder(logRotator(numToKeepStr: '20'))
+  }
+
   environment {
-    // GitHub credentials stored in Jenkins
-    GIT_CREDENTIALS = 'github-dreds'
+    // Git
+    GIT_CREDENTIALS      = 'github-dreds'
+    GIT_URL              = 'https://github.com/ggyabaah/ai-augmented-devops-pipeline.git'
+    GIT_BRANCH           = 'main'
 
-    // Docker Hub image repo
-    IMAGE_NAME = "ggyabaah/ai-augmented-devops"
+    // App
+    IMAGE_NAME           = 'ggyabaah/ai-augmented-devops'
+    PYTHON_PATH          = 'C:\\Program Files\\Python313\\python.exe'
 
-    // Python interpreter path
-    PYTHON_PATH = "C:\\Program Files\\Python313\\python.exe"
+    // Compose
+    COMPOSE_PROJECT_NAME = 'ai-devops-pipeline'
+    ENV_FILE             = '%WORKSPACE%\\.env'
 
-    // Compose project name (Compose uses this for naming containers/networks)
-    COMPOSE_PROJECT_NAME = "ai-devops-pipeline"
-
-    // .env file location (must exist in repo root after checkout)
-    ENV_FILE = "%WORKSPACE%\\.env"
-
-    // Optional (only if you still deploy to Minikube from Jenkins)
-    // KUBECONFIG = "C:\\Users\\fritz\\.kube\\config"
+    // If you ever re-enable k8s from Jenkins, uncomment and set correctly
+    // KUBECONFIG        = 'C:\\Users\\fritz\\.kube\\config'
   }
 
   stages {
 
-    stage('Checkout Code') {
+    stage('Checkout') {
       steps {
-        git branch: 'main',
-          credentialsId: "${GIT_CREDENTIALS}",
-          url: 'https://github.com/ggyabaah/ai-augmented-devops-pipeline.git'
+        checkout([$class: 'GitSCM',
+          branches: [[name: "*/${env.GIT_BRANCH}"]],
+          userRemoteConfigs: [[url: env.GIT_URL, credentialsId: env.GIT_CREDENTIALS]]
+        ])
       }
     }
 
-    stage('Sanity Check (Workspace + .env)') {
+    stage('Sanity Checks') {
       steps {
-        bat 'cd /d "%WORKSPACE%" && dir'
-        bat 'cd /d "%WORKSPACE%" && if not exist ".env" (echo ERROR: .env missing in workspace & exit /b 1)'
-        bat 'cd /d "%WORKSPACE%" && type .env'
-        bat 'cd /d "%WORKSPACE%" && if not exist "docker-compose.yml" (echo ERROR: docker-compose.yml missing & exit /b 1)'
+        bat '''
+          cd /d "%WORKSPACE%"
+          echo === Workspace ===
+          dir
+
+          echo === Required files ===
+          if not exist "docker-compose.yml" (echo ERROR: docker-compose.yml missing & exit /b 1)
+          if not exist ".env" (echo ERROR: .env missing & exit /b 1)
+          if not exist "requirements.txt" (echo ERROR: requirements.txt missing & exit /b 1)
+
+          echo === .env (redact nothing sensitive!) ===
+          type ".env"
+        '''
       }
     }
 
-    stage('Check Tooling (Docker + Compose)') {
+    stage('Tooling Check') {
       steps {
-        bat 'where docker'
-        bat 'docker version'
-        bat 'docker info'
-        bat 'docker compose version'
+        bat '''
+          where docker
+          docker version
+          docker compose version
+          docker info
+        '''
       }
     }
 
-    stage('Install Dependencies') {
+    stage('Python Dependencies') {
       steps {
-        bat 'cd /d "%WORKSPACE%" && "%PYTHON_PATH%" -m pip install --upgrade pip'
-        bat 'cd /d "%WORKSPACE%" && "%PYTHON_PATH%" -m pip install -r requirements.txt'
+        bat '''
+          cd /d "%WORKSPACE%"
+          "%PYTHON_PATH%" -m pip install --upgrade pip
+          "%PYTHON_PATH%" -m pip install -r requirements.txt
+          "%PYTHON_PATH%" -m pip install pytest
+        '''
       }
     }
 
     stage('Unit Tests') {
       steps {
-        bat 'cd /d "%WORKSPACE%" && if not exist test-results mkdir test-results'
-        bat 'cd /d "%WORKSPACE%" && "%PYTHON_PATH%" -m pip install pytest'
-        bat 'cd /d "%WORKSPACE%" && "%PYTHON_PATH%" -m pytest -v --junitxml=test-results\\pytest-results.xml'
+        bat '''
+          cd /d "%WORKSPACE%"
+          if not exist test-results mkdir test-results
+          "%PYTHON_PATH%" -m pytest -v --junitxml=test-results\\pytest-results.xml
+        '''
       }
       post {
         always {
@@ -71,15 +93,19 @@ pipeline {
 
     stage('Train Model (CI One Run)') {
       steps {
-        // If your train.py runs a server/loop, add flags like you did for test.py
-        // Adjust flags to match your script
-        bat 'cd /d "%WORKSPACE%" && "%PYTHON_PATH%" scripts\\train.py --once --no-server'
+        bat '''
+          cd /d "%WORKSPACE%"
+          "%PYTHON_PATH%" scripts\\train.py --once --no-server
+        '''
       }
     }
 
     stage('Test Model (CI One Run)') {
       steps {
-        bat 'cd /d "%WORKSPACE%" && "%PYTHON_PATH%" scripts\\test.py --once --no-server'
+        bat '''
+          cd /d "%WORKSPACE%"
+          "%PYTHON_PATH%" scripts\\test.py --once --no-server
+        '''
       }
     }
 
@@ -93,56 +119,120 @@ pipeline {
           )]) {
             bat '''
               cd /d "%WORKSPACE%"
+
               echo %DOCKER_HUB_PASS%> docker_pass.txt
               docker login -u %DOCKER_HUB_USER% --password-stdin < docker_pass.txt
               del docker_pass.txt
+
+              docker build -t %IMAGE_NAME%:%BUILD_NUMBER% -t %IMAGE_NAME%:latest .
+              docker push %IMAGE_NAME%:%BUILD_NUMBER%
+              docker push %IMAGE_NAME%:latest
             '''
-            bat 'cd /d "%WORKSPACE%" && docker build -t %IMAGE_NAME%:%BUILD_NUMBER% -t %IMAGE_NAME%:latest .'
-            bat 'cd /d "%WORKSPACE%" && docker push %IMAGE_NAME%:%BUILD_NUMBER%'
-            bat 'cd /d "%WORKSPACE%" && docker push %IMAGE_NAME%:latest'
           }
         }
       }
     }
 
-    // If Kubernetes from Jenkins is still flaky, leave this stage disabled for now
+    stage('Compose Down (safe)') {
+      steps {
+        // Never fail build for a missing project
+        bat '''
+          cd /d "%WORKSPACE%"
+          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" down --remove-orphans
+          exit /b 0
+        '''
+      }
+    }
+
+    stage('Compose Up') {
+      steps {
+        bat '''
+          cd /d "%WORKSPACE%"
+          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" up -d --build
+          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" ps
+        '''
+      }
+    }
+
+    stage('Verify Metrics Endpoints (fast)') {
+      options { timeout(time: 3, unit: 'MINUTES') }
+      steps {
+        // Verify inside the Compose network so we don't care about host port clashes
+        bat '''
+          cd /d "%WORKSPACE%"
+
+          echo === Verify trainer metrics (inside network) ===
+          docker run --rm --network %COMPOSE_PROJECT_NAME%_monitoring curlimages/curl:8.10.1 -s http://trainer:8000/metrics
+
+          echo === Verify tester metrics (inside network) ===
+          docker run --rm --network %COMPOSE_PROJECT_NAME%_monitoring curlimages/curl:8.10.1 -s http://tester:8001/metrics
+
+          echo === Verify pushgateway ready (inside network) ===
+          docker run --rm --network %COMPOSE_PROJECT_NAME%_monitoring curlimages/curl:8.10.1 -s http://pushgateway:9091/-/ready
+        '''
+      }
+    }
+
+    stage('Verify Tester One-Shot (no hang)') {
+      options { timeout(time: 5, unit: 'MINUTES') }
+      steps {
+        // Do NOT run the long-lived service. Force a one-shot command so Jenkins doesn't hang.
+        bat '''
+          cd /d "%WORKSPACE%"
+          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" run --rm tester python -u scripts/test.py --once --no-server
+        '''
+      }
+    }
+
+    stage('Compose Logs (last 80 lines)') {
+      steps {
+        bat '''
+          cd /d "%WORKSPACE%"
+          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" logs --tail=80
+        '''
+      }
+    }
+
+    // Optional: re-enable later once kubectl from Jenkins is stable
     // stage('Deploy to Kubernetes') {
     //   steps {
-    //     bat 'cd /d "%WORKSPACE%" && kubectl config current-context'
-    //     bat 'cd /d "%WORKSPACE%" && kubectl get nodes'
-    //     bat 'cd /d "%WORKSPACE%" && kubectl apply -f k8s\\deployment.yml'
+    //     bat '''
+    //       cd /d "%WORKSPACE%"
+    //       kubectl config current-context
+    //       kubectl get nodes
+    //       kubectl apply -f k8s\\deployment.yml
+    //     '''
     //   }
     // }
-
-    stage('Docker Compose Orchestration (with .env)') {
-      steps {
-        // CLEAN DOWN FIRST (do not fail build if nothing exists)
-        bat 'cd /d "%WORKSPACE%" && docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" down --remove-orphans'
-        // UP
-        bat 'cd /d "%WORKSPACE%" && docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" up -d --build'
-        // SHOW
-        bat 'cd /d "%WORKSPACE%" && docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" ps'
-      }
-    }
-
-    stage('Verify Service Health') {
-      steps {
-        // Optional: quick visibility into container logs if something fails
-        bat 'cd /d "%WORKSPACE%" && docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" logs --tail=50'
-      }
-    }
-
   }
 
   post {
     always {
-      echo 'Jenkins pipeline execution complete.'
+      echo 'Pipeline complete. Cleaning up Compose stack...'
       // Cleanup but don’t fail the job if cleanup has issues
       script {
         try {
-          bat 'cd /d "%WORKSPACE%" && docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" down --remove-orphans'
+          bat '''
+            cd /d "%WORKSPACE%"
+            docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" down --remove-orphans
+          '''
         } catch (err) {
           echo "Cleanup failed safely: ${err}"
+        }
+      }
+    }
+
+    failure {
+      echo 'Build failed. Showing Compose status + recent logs.'
+      script {
+        try {
+          bat '''
+            cd /d "%WORKSPACE%"
+            docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" ps
+            docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" logs --tail=120
+          '''
+        } catch (err) {
+          echo "Diagnostics failed safely: ${err}"
         }
       }
     }
