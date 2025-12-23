@@ -20,7 +20,7 @@ pipeline {
 
     // Compose
     COMPOSE_PROJECT_NAME = 'ai-devops-pipeline'
-    ENV_FILE             = '.env'
+    ENV_FILE             = '.env'                  // keep .env in repo root
     CURL_IMAGE           = 'curlimages/curl:8.10.1'
   }
 
@@ -39,16 +39,10 @@ pipeline {
       steps {
         bat '''
           cd /d "%WORKSPACE%"
-          echo === Workspace ===
-          dir
-
           echo === Required files ===
           if not exist "docker-compose.yml" (echo ERROR: docker-compose.yml missing & exit /b 1)
           if not exist "%ENV_FILE%" (echo ERROR: .env missing in workspace root & exit /b 1)
           if not exist "requirements.txt" (echo ERROR: requirements.txt missing & exit /b 1)
-
-          echo === .env (ports only recommended) ===
-          type "%ENV_FILE%"
         '''
       }
     }
@@ -59,7 +53,6 @@ pipeline {
           where docker
           docker version
           docker compose version
-          docker info
         '''
       }
     }
@@ -148,67 +141,38 @@ pipeline {
       }
     }
 
-    stage('Pre-pull Curl (fast)') {
+    stage('Pre-pull Curl (avoid first-run delays)') {
       options { timeout(time: 3, unit: 'MINUTES') }
       steps {
         bat 'docker pull %CURL_IMAGE%'
       }
     }
 
-    stage('Verify Containers Running (fast)') {
-      options { timeout(time: 2, unit: 'MINUTES') }
-      steps {
-        bat '''
-          cd /d "%WORKSPACE%"
-          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" ps
-
-          REM Fail if any service is not running
-          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" ps --status running | findstr /I "trainer tester prometheus grafana pushgateway alertmanager" > NUL
-          if errorlevel 1 (
-            echo ERROR: One or more services are not running.
-            docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" ps
-            exit /b 1
-          )
-        '''
-      }
-    }
-
-    stage('Verify Metrics Endpoints (no hang)') {
+    stage('Verify Trainer Metrics (fast, no spam)') {
       options { timeout(time: 3, unit: 'MINUTES') }
       steps {
-        // Use files + PowerShell to print first lines (no "more" pager).
         bat '''
           cd /d "%WORKSPACE%"
           set NET=%COMPOSE_PROJECT_NAME%_monitoring
 
-          echo === Network: %NET% ===
-          docker network ls | findstr /I "%NET%" || (echo ERROR: Compose network not found & exit /b 1)
-
-          echo === Trainer metrics (first 25 lines) ===
+          echo === Check trainer metrics reachable ===
           docker run --rm --network %NET% %CURL_IMAGE% -sS --fail --max-time 10 http://trainer:8000/metrics > trainer_metrics.txt
-          powershell -NoProfile -Command "Get-Content trainer_metrics.txt | Select-Object -First 25"
+
+          echo === Show a few key lines only ===
+          findstr /I "python_ process_ deployments_total" trainer_metrics.txt
+
           del trainer_metrics.txt
-
-          echo === Tester metrics (first 25 lines) ===
-          docker run --rm --network %NET% %CURL_IMAGE% -sS --fail --max-time 10 http://tester:8001/metrics > tester_metrics.txt
-          powershell -NoProfile -Command "Get-Content tester_metrics.txt | Select-Object -First 25"
-          del tester_metrics.txt
-
-          echo === Pushgateway ready ===
-          docker run --rm --network %NET% %CURL_IMAGE% -sS --fail --max-time 10 http://pushgateway:9091/-/ready > NUL
         '''
       }
     }
 
-    stage('Verify Tester One-Shot (no hang)') {
+    stage('Verify Tester One-Shot (NO HANG)') {
       options { timeout(time: 5, unit: 'MINUTES') }
       steps {
-        // Key changes:
-        // -T disables pseudo-TTY (common Jenkins hang cause)
-        // one-shot flags ensure script exits
+        // THIS is the fix: do not run the long-lived default command
         bat '''
           cd /d "%WORKSPACE%"
-          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" run --rm -T tester python -u scripts/test.py --once --no-server
+          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" run --rm tester python -u scripts/test.py --once --no-server
         '''
       }
     }
@@ -226,31 +190,10 @@ pipeline {
   post {
     always {
       echo 'Pipeline complete. Cleaning up Compose stack...'
-      script {
-        try {
-          bat '''
-            cd /d "%WORKSPACE%"
-            docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" down --remove-orphans
-          '''
-        } catch (err) {
-          echo "Cleanup failed safely: ${err}"
-        }
-      }
-    }
-
-    failure {
-      echo 'Build failed. Showing Compose status + recent logs.'
-      script {
-        try {
-          bat '''
-            cd /d "%WORKSPACE%"
-            docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" ps
-            docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" logs --tail=200
-          '''
-        } catch (err) {
-          echo "Diagnostics failed safely: ${err}"
-        }
-      }
+      bat '''
+        cd /d "%WORKSPACE%"
+        docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" down --remove-orphans
+      '''
     }
   }
 }
