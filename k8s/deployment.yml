@@ -17,7 +17,7 @@ spec:
       containers:
         - name: ai-app
           image: ggyabaah/ai-augmented-devops:latest   # <-- replace with your actual Docker Hub repo
-          imagePullPolicy: Always                     # ensures you always get the newest pushed image
+          imagePullPolicy: Always                    # ensures you always get the newest pushed image
           ports:
             - containerPort: 8000
           resources:
