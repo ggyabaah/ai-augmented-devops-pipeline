@@ -4,25 +4,25 @@ pipeline {
   options {
     timestamps()
     disableConcurrentBuilds()
+    skipDefaultCheckout(true)
     buildDiscarder(logRotator(numToKeepStr: '20'))
   }
 
   environment {
     // Git
-    GIT_CREDENTIALS      = 'github-dreds'
-    GIT_URL              = 'https://github.com/ggyabaah/ai-augmented-devops-pipeline.git'
-    GIT_BRANCH           = 'main'
+    GIT_CREDENTIALS = 'github-dreds'
+    GIT_URL         = 'https://github.com/ggyabaah/ai-augmented-devops-pipeline.git'
+    GIT_BRANCH      = 'main'
 
     // App
-    IMAGE_NAME           = 'ggyabaah/ai-augmented-devops'
-    PYTHON_PATH          = 'C:\\Program Files\\Python313\\python.exe'
+    IMAGE_NAME      = 'ggyabaah/ai-augmented-devops'
+    PYTHON_PATH     = 'C:\\Program Files\\Python313\\python.exe'
 
     // Compose
     COMPOSE_PROJECT_NAME = 'ai-devops-pipeline'
-    ENV_FILE             = '%WORKSPACE%\\.env'
-
-    // If you ever re-enable k8s from Jenkins, uncomment and set correctly
-    // KUBECONFIG        = 'C:\\Users\\fritz\\.kube\\config'
+    // IMPORTANT: do NOT store %WORKSPACE% inside ENV_FILE. CMD won’t expand nested vars.
+    ENV_FILE             = '.env'
+    CURL_IMAGE           = 'curlimages/curl:8.10.1'
   }
 
   stages {
@@ -45,11 +45,11 @@ pipeline {
 
           echo === Required files ===
           if not exist "docker-compose.yml" (echo ERROR: docker-compose.yml missing & exit /b 1)
-          if not exist ".env" (echo ERROR: .env missing & exit /b 1)
+          if not exist "%ENV_FILE%" (echo ERROR: .env missing in workspace root & exit /b 1)
           if not exist "requirements.txt" (echo ERROR: requirements.txt missing & exit /b 1)
 
-          echo === .env (redact nothing sensitive!) ===
-          type ".env"
+          echo === .env (ports only recommended) ===
+          type "%ENV_FILE%"
         '''
       }
     }
@@ -119,10 +119,7 @@ pipeline {
           )]) {
             bat '''
               cd /d "%WORKSPACE%"
-
-              echo %DOCKER_HUB_PASS%> docker_pass.txt
-              docker login -u %DOCKER_HUB_USER% --password-stdin < docker_pass.txt
-              del docker_pass.txt
+              echo %DOCKER_HUB_PASS% | docker login -u %DOCKER_HUB_USER% --password-stdin
 
               docker build -t %IMAGE_NAME%:%BUILD_NUMBER% -t %IMAGE_NAME%:latest .
               docker push %IMAGE_NAME%:%BUILD_NUMBER%
@@ -135,11 +132,10 @@ pipeline {
 
     stage('Compose Down (safe)') {
       steps {
-        // Never fail build for a missing project
+        // CMD supports ||, PowerShell doesn't. This is a bat step so we are fine.
         bat '''
           cd /d "%WORKSPACE%"
-          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" down --remove-orphans
-          exit /b 0
+          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" down --remove-orphans || echo Nothing to remove.
         '''
       }
     }
@@ -154,21 +150,39 @@ pipeline {
       }
     }
 
+    stage('Pre-pull Curl (avoids verify hang)') {
+      options { timeout(time: 3, unit: 'MINUTES') }
+      steps {
+        bat '''
+          docker pull %CURL_IMAGE%
+        '''
+      }
+    }
+
     stage('Verify Metrics Endpoints (fast)') {
       options { timeout(time: 3, unit: 'MINUTES') }
       steps {
-        // Verify inside the Compose network so we don't care about host port clashes
+        // Verify from inside the Compose network so host port clashes don't matter.
+        // Keep output short (don’t dump full /metrics into the Jenkins console).
         bat '''
           cd /d "%WORKSPACE%"
+          set NET=%COMPOSE_PROJECT_NAME%_monitoring
 
-          echo === Verify trainer metrics (inside network) ===
-          docker run --rm --network %COMPOSE_PROJECT_NAME%_monitoring curlimages/curl:8.10.1 -s http://trainer:8000/metrics
+          echo === Network: %NET% ===
+          docker network ls | findstr /I "%NET%" || (echo ERROR: Compose network not found & exit /b 1)
 
-          echo === Verify tester metrics (inside network) ===
-          docker run --rm --network %COMPOSE_PROJECT_NAME%_monitoring curlimages/curl:8.10.1 -s http://tester:8001/metrics
+          echo === Trainer metrics (first 25 lines) ===
+          docker run --rm --network %NET% %CURL_IMAGE% -sS --fail --max-time 10 http://trainer:8000/metrics > trainer_metrics.txt
+          type trainer_metrics.txt | more
+          del trainer_metrics.txt
 
-          echo === Verify pushgateway ready (inside network) ===
-          docker run --rm --network %COMPOSE_PROJECT_NAME%_monitoring curlimages/curl:8.10.1 -s http://pushgateway:9091/-/ready
+          echo === Tester metrics (first 25 lines) ===
+          docker run --rm --network %NET% %CURL_IMAGE% -sS --fail --max-time 10 http://tester:8001/metrics > tester_metrics.txt
+          type tester_metrics.txt | more
+          del tester_metrics.txt
+
+          echo === Pushgateway ready ===
+          docker run --rm --network %NET% %CURL_IMAGE% -sS --fail --max-time 10 http://pushgateway:9091/-/ready > NUL
         '''
       }
     }
@@ -176,7 +190,7 @@ pipeline {
     stage('Verify Tester One-Shot (no hang)') {
       options { timeout(time: 5, unit: 'MINUTES') }
       steps {
-        // Do NOT run the long-lived service. Force a one-shot command so Jenkins doesn't hang.
+        // One-shot run so Jenkins doesn’t hang on long-running services.
         bat '''
           cd /d "%WORKSPACE%"
           docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" run --rm tester python -u scripts/test.py --once --no-server
@@ -184,32 +198,19 @@ pipeline {
       }
     }
 
-    stage('Compose Logs (last 80 lines)') {
+    stage('Compose Logs (last 120 lines)') {
       steps {
         bat '''
           cd /d "%WORKSPACE%"
-          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" logs --tail=80
+          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" logs --tail=120
         '''
       }
     }
-
-    // Optional: re-enable later once kubectl from Jenkins is stable
-    // stage('Deploy to Kubernetes') {
-    //   steps {
-    //     bat '''
-    //       cd /d "%WORKSPACE%"
-    //       kubectl config current-context
-    //       kubectl get nodes
-    //       kubectl apply -f k8s\\deployment.yml
-    //     '''
-    //   }
-    // }
   }
 
   post {
     always {
       echo 'Pipeline complete. Cleaning up Compose stack...'
-      // Cleanup but don’t fail the job if cleanup has issues
       script {
         try {
           bat '''
@@ -229,7 +230,7 @@ pipeline {
           bat '''
             cd /d "%WORKSPACE%"
             docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" ps
-            docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" logs --tail=120
+            docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" logs --tail=200
           '''
         } catch (err) {
           echo "Diagnostics failed safely: ${err}"
