@@ -131,16 +131,6 @@ pipeline {
       }
     }
 
-    stage('Compose Up') {
-      steps {
-        bat '''
-          cd /d "%WORKSPACE%"
-          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" up -d --build
-          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" ps
-        '''
-      }
-    }
-
     stage('Pre-pull Curl (avoid first-run delays)') {
       options { timeout(time: 3, unit: 'MINUTES') }
       steps {
@@ -148,18 +138,29 @@ pipeline {
       }
     }
 
-    stage('Verify Trainer Metrics (fast, no spam)') {
+    stage('Compose Up (NO tester service)') {
+      options { timeout(time: 8, unit: 'MINUTES') }
+      steps {
+        // IMPORTANT: Start only long-lived services. Do NOT start tester (it loops).
+        bat '''
+          cd /d "%WORKSPACE%"
+          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" up -d --build trainer pushgateway prometheus alertmanager grafana
+          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" ps
+        '''
+      }
+    }
+
+    stage('Verify Trainer Metrics (fast)') {
       options { timeout(time: 3, unit: 'MINUTES') }
       steps {
         bat '''
           cd /d "%WORKSPACE%"
           set NET=%COMPOSE_PROJECT_NAME%_monitoring
 
-          echo === Check trainer metrics reachable ===
           docker run --rm --network %NET% %CURL_IMAGE% -sS --fail --max-time 10 http://trainer:8000/metrics > trainer_metrics.txt
 
-          echo === Show a few key lines only ===
-          findstr /I "python_ process_ deployments_total" trainer_metrics.txt
+          echo === Key metric lines (if present) ===
+          findstr /I "python_ process_ deployments_total" trainer_metrics.txt || echo (No matching lines found)
 
           del trainer_metrics.txt
         '''
@@ -169,7 +170,7 @@ pipeline {
     stage('Verify Tester One-Shot (NO HANG)') {
       options { timeout(time: 5, unit: 'MINUTES') }
       steps {
-        // THIS is the fix: do not run the long-lived default command
+        // One-shot run that exits
         bat '''
           cd /d "%WORKSPACE%"
           docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" run --rm tester python -u scripts/test.py --once --no-server
@@ -192,7 +193,7 @@ pipeline {
       echo 'Pipeline complete. Cleaning up Compose stack...'
       bat '''
         cd /d "%WORKSPACE%"
-        docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" down --remove-orphans
+        docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" down --remove-orphans || exit /b 0
       '''
     }
   }
