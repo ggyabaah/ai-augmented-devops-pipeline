@@ -1,54 +1,45 @@
-networks:
-  monitoring:
-    name: aiartefact_monitoring
-
-volumes:
-  model-store:
-  grafana-data:
-  prometheus-data:
+name: ai-devops-pipeline
 
 services:
   trainer:
     build: .
-    container_name: trainer
     command: python scripts/train.py
     environment:
-      - VERSION=${VERSION:-dev}
-      - GIT_SHA=${GIT_SHA:-local}
-    ports:
-      - "8000:8000"
+      VERSION: ${VERSION:-dev}
+      GIT_SHA: ${GIT_SHA:-local}
     volumes:
       - model-store:/app/model
-    networks: [monitoring]
+    expose:
+      - "8000"
+    networks:
+      - monitoring
     restart: unless-stopped
 
   tester:
     build: .
-    container_name: tester
     command: python scripts/test.py
     environment:
-      - VERSION=${VERSION:-dev}
-      - GIT_SHA=${GIT_SHA:-local}
-      - MODEL_DIR=/app/model
-    ports:
-      - "8001:8001"
+      VERSION: ${VERSION:-dev}
+      GIT_SHA: ${GIT_SHA:-local}
+      MODEL_DIR: /app/model
     volumes:
       - model-store:/app/model
-    networks: [monitoring]
+    expose:
+      - "8001"
+    networks:
+      - monitoring
     restart: unless-stopped
 
-  # ✅ NEW: Pushgateway for deployment-event metrics (Deployment Frequency)
   pushgateway:
     image: prom/pushgateway:latest
-    container_name: pushgateway
     ports:
-      - "9091:9091"
-    networks: [monitoring]
+      - "127.0.0.1:${PUSHGATEWAY_HOST_PORT:-19091}:9091"
+    networks:
+      - monitoring
     restart: unless-stopped
 
   prometheus:
     image: prom/prometheus:latest
-    container_name: prometheus
     command: >
       --config.file=/etc/prometheus/prometheus.yml
       --storage.tsdb.path=/prometheus
@@ -58,41 +49,50 @@ services:
       - ./monitoring/rules.yml:/etc/prometheus/rules.yml:ro
       - prometheus-data:/prometheus
     ports:
-      # ✅ FIX: expose Prometheus on 9090 (standard)
-      - "9091:9090"
+      - "127.0.0.1:${PROMETHEUS_HOST_PORT:-19090}:9090"
     depends_on:
       - trainer
       - tester
       - alertmanager
       - pushgateway
-    networks: [monitoring]
+    networks:
+      - monitoring
     restart: unless-stopped
 
   alertmanager:
     image: prom/alertmanager:latest
-    container_name: alertmanager
     command: --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager
     volumes:
       - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
     ports:
-      - "9093:9093"
-    networks: [monitoring]
+      - "127.0.0.1:${ALERTMANAGER_HOST_PORT:-19093}:9093"
+    networks:
+      - monitoring
     restart: unless-stopped
 
   grafana:
     image: grafana/grafana:11.1.0
-    container_name: grafana
     depends_on:
       - prometheus
     ports:
-      # ✅ FIX: keep Grafana on 3000 unless you have a reason not to
-      - "3001:3000"
+      - "127.0.0.1:${GRAFANA_HOST_PORT:-13001}:3000"
     environment:
-      - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
     volumes:
       - grafana-data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/etc/grafana/dashboards:ro
-    networks: [monitoring]
+    networks:
+      - monitoring
     restart: unless-stopped
+
+networks:
+  monitoring:
+    # BEST OPTION (no warnings): let Compose create its own network per project
+    driver: bridge
+
+volumes:
+  model-store:
+  grafana-data:
+  prometheus-data:
