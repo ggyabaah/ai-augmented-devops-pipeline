@@ -130,14 +130,17 @@ pipeline {
             usernameVariable: 'DOCKER_HUB_USER',
             passwordVariable: 'DOCKER_HUB_PASS'
           )]) {
-            bat '''
-              cd /d "%WORKSPACE%"
-              echo %DOCKER_HUB_PASS% | docker login -u %DOCKER_HUB_USER% --password-stdin
+            // Simple retry to reduce random network/registry blips
+            retry(2) {
+              bat '''
+                cd /d "%WORKSPACE%"
+                echo %DOCKER_HUB_PASS% | docker login -u %DOCKER_HUB_USER% --password-stdin
 
-              docker build -t %IMAGE_NAME%:%BUILD_NUMBER% -t %IMAGE_NAME%:latest .
-              docker push %IMAGE_NAME%:%BUILD_NUMBER%
-              docker push %IMAGE_NAME%:latest
-            '''
+                docker build -t %IMAGE_NAME%:%BUILD_NUMBER% -t %IMAGE_NAME%:latest .
+                docker push %IMAGE_NAME%:%BUILD_NUMBER%
+                docker push %IMAGE_NAME%:latest
+              '''
+            }
           }
         }
       }
@@ -213,7 +216,7 @@ pipeline {
           if (fileExists('fault.flag')) {
             def txt = readFile('fault.flag').trim().toLowerCase()
             if (txt.contains('fail_deploy=true')) {
-              error('fault.flag contains fail_deploy=true. Forcing pipeline failure to simulate faulty commit')
+              error('fault.flag contains fail_deploy=true. Forcing pipeline failure to simulate faulty commit.')
             }
           }
 
@@ -236,7 +239,8 @@ pipeline {
       steps {
         bat '''
           cd /d "%WORKSPACE%"
-          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" logs --tail=120
+          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" logs --tail=120 > compose_logs.txt
+          type compose_logs.txt
         '''
       }
     }
@@ -244,13 +248,14 @@ pipeline {
 
   post {
 
-    // IMPORTANT:
-    // We avoid label quoting issues by putting pipeline as a grouping label in the URL.
-    // That means the metric body is simple: "deployments_total 123"
-    // Pushgateway will expose it as: deployments_total{job="deployments",pipeline="ai-augmented-devops",instance="success"} 123
+    // We keep pipeline as a grouping label in the URL to avoid quoting issues.
+    // We now maintain TRUE counters in Pushgateway:
+    // - deployments_total increments by 1 on each SUCCESS
+    // - deployments_failed_total increments by 1 on each FAILURE
+    // We also push timestamps + last build numbers for traceability.
 
     success {
-      echo 'Build SUCCESS: pushing success metrics to Pushgateway (via Docker network, URL grouping labels)...'
+      echo 'Build SUCCESS: incrementing deployments_total and pushing timestamp (via Docker network)...'
       bat '''
         cd /d "%WORKSPACE%"
         set NET=%COMPOSE_PROJECT_NAME%_monitoring
@@ -259,11 +264,20 @@ pipeline {
           -e BUILD_NUMBER=%BUILD_NUMBER% ^
           -e PIPELINE_LABEL=%PIPELINE_LABEL% ^
           %CURL_IMAGE% sh -c "
-            ts=$(date +%%s);
-            v=$BUILD_NUMBER;
+            set -e
+            ts=$(date +%%s)
 
-            printf 'deployments_total %s\\n' \\"$v\\" > /tmp/m.txt
-            printf 'deployments_success_timestamp_seconds %s\\n' \\"$ts\\" >> /tmp/m.txt
+            cur=$(curl -s http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/success \
+              | awk '/^deployments_total[[:space:]]/ {print $2}' | tail -n 1)
+            [ -z \\"$cur\\" ] && cur=0
+
+            v=$((cur+1))
+
+            cat > /tmp/m.txt <<EOF
+deployments_total $v
+deployments_success_timestamp_seconds $ts
+last_successful_build_number $BUILD_NUMBER
+EOF
 
             curl -sS --fail -X POST --data-binary @/tmp/m.txt \
               http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/success
@@ -273,7 +287,7 @@ pipeline {
     }
 
     failure {
-      echo 'Build FAILURE: pushing failure metrics to Pushgateway (via Docker network, URL grouping labels)...'
+      echo 'Build FAILURE: incrementing deployments_failed_total and pushing timestamp (via Docker network)...'
       bat '''
         cd /d "%WORKSPACE%"
         set NET=%COMPOSE_PROJECT_NAME%_monitoring
@@ -282,11 +296,20 @@ pipeline {
           -e BUILD_NUMBER=%BUILD_NUMBER% ^
           -e PIPELINE_LABEL=%PIPELINE_LABEL% ^
           %CURL_IMAGE% sh -c "
-            ts=$(date +%%s);
-            v=$BUILD_NUMBER;
+            set -e
+            ts=$(date +%%s)
 
-            printf 'deployments_failed_total %s\\n' \\"$v\\" > /tmp/m.txt
-            printf 'deployments_failed_timestamp_seconds %s\\n' \\"$ts\\" >> /tmp/m.txt
+            cur=$(curl -s http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/failure \
+              | awk '/^deployments_failed_total[[:space:]]/ {print $2}' | tail -n 1)
+            [ -z \\"$cur\\" ] && cur=0
+
+            v=$((cur+1))
+
+            cat > /tmp/m.txt <<EOF
+deployments_failed_total $v
+deployments_failed_timestamp_seconds $ts
+last_failed_build_number $BUILD_NUMBER
+EOF
 
             curl -sS --fail -X POST --data-binary @/tmp/m.txt \
               http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/failure
@@ -296,6 +319,9 @@ pipeline {
     }
 
     always {
+      // Keep evidence for your dissertation
+      archiveArtifacts artifacts: 'compose_logs.txt, test-results/*.xml', allowEmptyArchive: true
+
       script {
         if (params.KEEP_STACK) {
           echo 'KEEP_STACK=true, leaving stack running for Grafana/Prometheus inspection.'
