@@ -260,30 +260,72 @@ pipeline {
   post {
 
     success {
-      echo 'Build SUCCESS: incrementing deployments_total and pushing timestamp (via Docker network)...'
-      bat '''
-        cd /d "%WORKSPACE%"
-        set NET=%COMPOSE_PROJECT_NAME%_monitoring
+      echo 'Build SUCCESS: incrementing deployments_total and pushing timestamp (host -> Pushgateway)...'
+      powershell '''
+        $ErrorActionPreference = "Stop"
 
-        docker run --rm --network %NET% ^
-          -e BUILD_NUMBER=%BUILD_NUMBER% ^
-          -e PIPELINE_LABEL=%PIPELINE_LABEL% ^
-          %CURL_IMAGE% sh -c "set -e; ts=$(date +%%s); cur=$(curl -s http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/success | awk '/^deployments_total[[:space:]]/ {print $2}' | tail -n 1); [ -z \\"$cur\\" ] && cur=0; v=$((cur+1)); printf 'deployments_total %s\\n' \\"$v\\" > /tmp/m.txt; printf 'deployments_success_timestamp_seconds %s\\n' \\"$ts\\" >> /tmp/m.txt; printf 'last_successful_build_number %s\\n' \\"$BUILD_NUMBER\\" >> /tmp/m.txt; curl -sS --fail -X POST --data-binary @/tmp/m.txt http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/success"
-        if %errorlevel% neq 0 (echo ERROR: Pushgateway push failed (success) & exit /b 1)
+        $pg = "http://127.0.0.1:19091"
+        $pipeline = $env:PIPELINE_LABEL
+        $url = "$pg/metrics/job/deployments/pipeline/$pipeline/instance/success"
+
+        $ts = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+
+        $cur = (curl.exe -s $url |
+          Select-String '^deployments_total\\s+' |
+          ForEach-Object { ($_.Line -split '\\s+')[1] } |
+          Select-Object -Last 1)
+
+        if (-not $cur) { $cur = 0 }
+        $v = [int]$cur + 1
+
+        $body = @"
+deployments_total $v
+deployments_success_timestamp_seconds $ts
+last_successful_build_number $($env:BUILD_NUMBER)
+"@
+
+        $tmp = Join-Path $env:WORKSPACE "push_success.txt"
+        $body | Out-File -Encoding ascii $tmp
+
+        curl.exe -sS --fail -X POST --data-binary "@$tmp" $url
+
+        Remove-Item $tmp -ErrorAction SilentlyContinue
+        Write-Host "Pushed deployments_total=$v, ts=$ts, build=$($env:BUILD_NUMBER)"
       '''
     }
 
     failure {
-      echo 'Build FAILURE: incrementing deployments_failed_total and pushing timestamp (via Docker network)...'
-      bat '''
-        cd /d "%WORKSPACE%"
-        set NET=%COMPOSE_PROJECT_NAME%_monitoring
+      echo 'Build FAILURE: incrementing deployments_failed_total and pushing timestamp (host -> Pushgateway)...'
+      powershell '''
+        $ErrorActionPreference = "Stop"
 
-        docker run --rm --network %NET% ^
-          -e BUILD_NUMBER=%BUILD_NUMBER% ^
-          -e PIPELINE_LABEL=%PIPELINE_LABEL% ^
-          %CURL_IMAGE% sh -c "set -e; ts=$(date +%%s); cur=$(curl -s http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/failure | awk '/^deployments_failed_total[[:space:]]/ {print $2}' | tail -n 1); [ -z \\"$cur\\" ] && cur=0; v=$((cur+1)); printf 'deployments_failed_total %s\\n' \\"$v\\" > /tmp/m.txt; printf 'deployments_failed_timestamp_seconds %s\\n' \\"$ts\\" >> /tmp/m.txt; printf 'last_failed_build_number %s\\n' \\"$BUILD_NUMBER\\" >> /tmp/m.txt; curl -sS --fail -X POST --data-binary @/tmp/m.txt http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/failure"
-        if %errorlevel% neq 0 (echo ERROR: Pushgateway push failed (failure) & exit /b 1)
+        $pg = "http://127.0.0.1:19091"
+        $pipeline = $env:PIPELINE_LABEL
+        $url = "$pg/metrics/job/deployments/pipeline/$pipeline/instance/failure"
+
+        $ts = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+
+        $cur = (curl.exe -s $url |
+          Select-String '^deployments_failed_total\\s+' |
+          ForEach-Object { ($_.Line -split '\\s+')[1] } |
+          Select-Object -Last 1)
+
+        if (-not $cur) { $cur = 0 }
+        $v = [int]$cur + 1
+
+        $body = @"
+deployments_failed_total $v
+deployments_failed_timestamp_seconds $ts
+last_failed_build_number $($env:BUILD_NUMBER)
+"@
+
+        $tmp = Join-Path $env:WORKSPACE "push_failure.txt"
+        $body | Out-File -Encoding ascii $tmp
+
+        curl.exe -sS --fail -X POST --data-binary "@$tmp" $url
+
+        Remove-Item $tmp -ErrorAction SilentlyContinue
+        Write-Host "Pushed deployments_failed_total=$v, ts=$ts, build=$($env:BUILD_NUMBER)"
       '''
     }
 
