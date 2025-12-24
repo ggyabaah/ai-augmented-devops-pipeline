@@ -9,21 +9,9 @@ pipeline {
   }
 
   parameters {
-    booleanParam(
-      name: 'INJECT_FAULT',
-      defaultValue: false,
-      description: 'Force a failure to simulate a faulty commit (used to test alerting).'
-    )
-    booleanParam(
-      name: 'KEEP_STACK',
-      defaultValue: true,
-      description: 'Keep Prometheus/Grafana/Pushgateway running after the build for inspection.'
-    )
-    booleanParam(
-      name: 'RESET_STACK_FIRST',
-      defaultValue: false,
-      description: 'If true, bring the Compose stack down at the start (clean slate).'
-    )
+    booleanParam(name: 'INJECT_FAULT', defaultValue: false, description: 'Force a failure to simulate a faulty commit (used to test alerting).')
+    booleanParam(name: 'KEEP_STACK', defaultValue: true, description: 'Keep Prometheus/Grafana/Pushgateway running after the build for inspection.')
+    booleanParam(name: 'RESET_STACK_FIRST', defaultValue: false, description: 'If true, bring the Compose stack down at the start (clean slate).')
   }
 
   environment {
@@ -41,8 +29,7 @@ pipeline {
     ENV_FILE             = '.env'
     CURL_IMAGE           = 'curlimages/curl:8.10.1'
 
-    // Pushgateway (host-mapped port in your compose)
-    PUSHGATEWAY_BASE_URL = 'http://127.0.0.1:19091'
+    // Labels
     PIPELINE_LABEL       = 'ai-augmented-devops'
   }
 
@@ -54,6 +41,18 @@ pipeline {
           branches: [[name: "*/${env.GIT_BRANCH}"]],
           userRemoteConfigs: [[url: env.GIT_URL, credentialsId: env.GIT_CREDENTIALS]]
         ])
+      }
+    }
+
+    stage('Show Build Revision') {
+      steps {
+        bat '''
+          cd /d "%WORKSPACE%"
+          echo === Git branch and commit Jenkins is using ===
+          git rev-parse --abbrev-ref HEAD
+          git rev-parse --short HEAD
+          git log -1 --oneline
+        '''
       }
     }
 
@@ -145,9 +144,7 @@ pipeline {
     }
 
     stage('Compose Down (optional clean slate)') {
-      when {
-        expression { return params.RESET_STACK_FIRST }
-      }
+      when { expression { return params.RESET_STACK_FIRST } }
       steps {
         bat '''
           cd /d "%WORKSPACE%"
@@ -174,6 +171,21 @@ pipeline {
       }
     }
 
+    stage('Pushgateway Reachability (Docker network)') {
+      steps {
+        bat '''
+          cd /d "%WORKSPACE%"
+          set NET=%COMPOSE_PROJECT_NAME%_monitoring
+
+          echo === Checking Pushgateway readiness inside Docker network ===
+          docker run --rm --network %NET% %CURL_IMAGE% sh -c "curl -sS --fail http://pushgateway:9091/-/ready >/dev/null"
+          if %errorlevel% neq 0 (echo ERROR: Pushgateway not reachable in Docker network & exit /b 1)
+
+          echo Pushgateway is reachable.
+        '''
+      }
+    }
+
     stage('Verify Trainer Metrics (fast)') {
       options { timeout(time: 3, unit: 'MINUTES') }
       steps {
@@ -194,12 +206,10 @@ pipeline {
     stage('Fault Injection Check (simulate faulty commit)') {
       steps {
         script {
-          // Option 1: Jenkins parameter
           if (params.INJECT_FAULT) {
             error('Fault injection enabled (INJECT_FAULT=true). Forcing pipeline failure to simulate faulty commit.')
           }
 
-          // Option 2: Repo flag file
           if (fileExists('fault.flag')) {
             def txt = readFile('fault.flag').trim().toLowerCase()
             if (txt.contains('fail_deploy=true')) {
@@ -235,26 +245,44 @@ pipeline {
   post {
 
     success {
-      echo 'Build SUCCESS: pushing success metrics to Pushgateway...'
+      echo 'Build SUCCESS: pushing success metrics to Pushgateway (via Docker network)...'
       bat '''
-        powershell -NoProfile -Command ^
-          "$ts = [int][DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); ^
-           $v  = [int]$env:BUILD_NUMBER; ^
-           $body  = 'deployments_total{pipeline=\"%PIPELINE_LABEL%\"} ' + $v + \"`n\"; ^
-           $body += 'deployments_success_timestamp_seconds{pipeline=\"%PIPELINE_LABEL%\"} ' + $ts + \"`n\"; ^
-           Invoke-WebRequest -Uri '%PUSHGATEWAY_BASE_URL%/metrics/job/deployments/instance/success' -Method POST -ContentType 'text/plain' -Body $body | Out-Null"
+        cd /d "%WORKSPACE%"
+        set NET=%COMPOSE_PROJECT_NAME%_monitoring
+
+        docker run --rm --network %NET% %CURL_IMAGE% sh -c "
+          ts=$(date +%s);
+          v=${BUILD_NUMBER};
+
+          printf 'deployments_total{pipeline=\"%PIPELINE_LABEL%\"} %s\\n' \"$v\" > /tmp/m.txt
+          printf 'deployments_success_timestamp_seconds{pipeline=\"%PIPELINE_LABEL%\"} %s\\n' \"$ts\" >> /tmp/m.txt
+
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST --data-binary @/tmp/m.txt http://pushgateway:9091/metrics/job/deployments/instance/success);
+          echo Pushgateway HTTP $code;
+          test \"$code\" = \"202\" -o \"$code\" = \"200\"
+        "
+        if %errorlevel% neq 0 (echo ERROR: Pushgateway push failed (success) & exit /b 1)
       '''
     }
 
     failure {
-      echo 'Build FAILURE: pushing failure metrics to Pushgateway...'
+      echo 'Build FAILURE: pushing failure metrics to Pushgateway (via Docker network)...'
       bat '''
-        powershell -NoProfile -Command ^
-          "$ts = [int][DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); ^
-           $v  = [int]$env:BUILD_NUMBER; ^
-           $body  = 'deployments_failed_total{pipeline=\"%PIPELINE_LABEL%\"} ' + $v + \"`n\"; ^
-           $body += 'deployments_failed_timestamp_seconds{pipeline=\"%PIPELINE_LABEL%\"} ' + $ts + \"`n\"; ^
-           Invoke-WebRequest -Uri '%PUSHGATEWAY_BASE_URL%/metrics/job/deployments/instance/failure' -Method POST -ContentType 'text/plain' -Body $body | Out-Null"
+        cd /d "%WORKSPACE%"
+        set NET=%COMPOSE_PROJECT_NAME%_monitoring
+
+        docker run --rm --network %NET% %CURL_IMAGE% sh -c "
+          ts=$(date +%s);
+          v=${BUILD_NUMBER};
+
+          printf 'deployments_failed_total{pipeline=\"%PIPELINE_LABEL%\"} %s\\n' \"$v\" > /tmp/m.txt
+          printf 'deployments_failed_timestamp_seconds{pipeline=\"%PIPELINE_LABEL%\"} %s\\n' \"$ts\" >> /tmp/m.txt
+
+          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST --data-binary @/tmp/m.txt http://pushgateway:9091/metrics/job/deployments/instance/failure);
+          echo Pushgateway HTTP $code;
+          test \"$code\" = \"202\" -o \"$code\" = \"200\"
+        "
+        if %errorlevel% neq 0 (echo ERROR: Pushgateway push failed (failure) & exit /b 1)
       '''
     }
 
