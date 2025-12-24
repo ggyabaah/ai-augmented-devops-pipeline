@@ -9,9 +9,21 @@ pipeline {
   }
 
   parameters {
-    booleanParam(name: 'INJECT_FAULT', defaultValue: false, description: 'Force a failure to simulate a faulty commit (used to test alerting).')
-    booleanParam(name: 'KEEP_STACK', defaultValue: true, description: 'Keep Prometheus/Grafana/Pushgateway running after the build for inspection.')
-    booleanParam(name: 'RESET_STACK_FIRST', defaultValue: false, description: 'If true, bring the Compose stack down at the start (clean slate).')
+    booleanParam(
+      name: 'INJECT_FAULT',
+      defaultValue: false,
+      description: 'Force a failure to simulate a faulty commit (used to test alerting).'
+    )
+    booleanParam(
+      name: 'KEEP_STACK',
+      defaultValue: true,
+      description: 'Keep Prometheus/Grafana/Pushgateway running after the build for inspection.'
+    )
+    booleanParam(
+      name: 'RESET_STACK_FIRST',
+      defaultValue: false,
+      description: 'If true, bring the Compose stack down at the start (clean slate).'
+    )
   }
 
   environment {
@@ -29,7 +41,7 @@ pipeline {
     ENV_FILE             = '.env'
     CURL_IMAGE           = 'curlimages/curl:8.10.1'
 
-    // Labels
+    // Metrics label
     PIPELINE_LABEL       = 'ai-augmented-devops'
   }
 
@@ -130,7 +142,6 @@ pipeline {
             usernameVariable: 'DOCKER_HUB_USER',
             passwordVariable: 'DOCKER_HUB_PASS'
           )]) {
-            // Simple retry to reduce random network/registry blips
             retry(2) {
               bat '''
                 cd /d "%WORKSPACE%"
@@ -163,7 +174,7 @@ pipeline {
       }
     }
 
-    stage('Compose Up (NO tester service)') {
+    stage('Compose Up (core monitoring + trainer)') {
       options { timeout(time: 8, unit: 'MINUTES') }
       steps {
         bat '''
@@ -181,7 +192,7 @@ pipeline {
           set NET=%COMPOSE_PROJECT_NAME%_monitoring
 
           echo === Checking Pushgateway readiness inside Docker network ===
-          docker run --rm --network %NET% %CURL_IMAGE% sh -c "curl -sS --fail http://pushgateway:9091/-/ready >/dev/null"
+          docker run --rm --network %NET% %CURL_IMAGE% sh -c "curl -sS --fail http://pushgateway:9091/-/ready > /dev/null"
           if %errorlevel% neq 0 (echo ERROR: Pushgateway not reachable in Docker network & exit /b 1)
 
           echo Pushgateway is reachable.
@@ -246,62 +257,56 @@ pipeline {
     }
   }
 
-post {
+  post {
 
-    // We keep pipeline as a grouping label in the URL to avoid quoting issues.
-    // We now maintain TRUE counters in Pushgateway:
-    // - deployments_total increments by 1 on each SUCCESS
-    // - deployments_failed_total increments by 1 on each FAILURE
-    // We also push timestamps + last build numbers for traceability.
+    success {
+      echo 'Build SUCCESS: incrementing deployments_total and pushing timestamp (via Docker network)...'
+      bat '''
+        cd /d "%WORKSPACE%"
+        set NET=%COMPOSE_PROJECT_NAME%_monitoring
 
-  success {
-    echo 'Build SUCCESS: incrementing deployments_total and pushing timestamp (via Docker network)...'
-    bat '''
-      cd /d "%WORKSPACE%"
-      set NET=%COMPOSE_PROJECT_NAME%_monitoring
+        docker run --rm --network %NET% ^
+          -e BUILD_NUMBER=%BUILD_NUMBER% ^
+          -e PIPELINE_LABEL=%PIPELINE_LABEL% ^
+          %CURL_IMAGE% sh -c "set -e; ts=$(date +%%s); cur=$(curl -s http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/success | awk '/^deployments_total[[:space:]]/ {print $2}' | tail -n 1); [ -z \\"$cur\\" ] && cur=0; v=$((cur+1)); printf 'deployments_total %s\\n' \\"$v\\" > /tmp/m.txt; printf 'deployments_success_timestamp_seconds %s\\n' \\"$ts\\" >> /tmp/m.txt; printf 'last_successful_build_number %s\\n' \\"$BUILD_NUMBER\\" >> /tmp/m.txt; curl -sS --fail -X POST --data-binary @/tmp/m.txt http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/success"
+        if %errorlevel% neq 0 (echo ERROR: Pushgateway push failed (success) & exit /b 1)
+      '''
+    }
 
-      docker run --rm --network %NET% ^
-        -e BUILD_NUMBER=%BUILD_NUMBER% ^
-        -e PIPELINE_LABEL=%PIPELINE_LABEL% ^
-        %CURL_IMAGE% sh -c "set -e; ts=$(date +%%s); cur=$(curl -s http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/success | awk '/^deployments_total[[:space:]]/ {print $2}' | tail -n 1); [ -z \\"$cur\\" ] && cur=0; v=$((cur+1)); printf 'deployments_total %s\\n' \\"$v\\" > /tmp/m.txt; printf 'deployments_success_timestamp_seconds %s\\n' \\"$ts\\" >> /tmp/m.txt; printf 'last_successful_build_number %s\\n' \\"$BUILD_NUMBER\\" >> /tmp/m.txt; curl -sS --fail -X POST --data-binary @/tmp/m.txt http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/success"
-      if %errorlevel% neq 0 (echo ERROR: Pushgateway push failed (success) & exit /b 1)
-    '''
-  }
+    failure {
+      echo 'Build FAILURE: incrementing deployments_failed_total and pushing timestamp (via Docker network)...'
+      bat '''
+        cd /d "%WORKSPACE%"
+        set NET=%COMPOSE_PROJECT_NAME%_monitoring
 
-  failure {
-    echo 'Build FAILURE: incrementing deployments_failed_total and pushing timestamp (via Docker network)...'
-    bat '''
-      cd /d "%WORKSPACE%"
-      set NET=%COMPOSE_PROJECT_NAME%_monitoring
+        docker run --rm --network %NET% ^
+          -e BUILD_NUMBER=%BUILD_NUMBER% ^
+          -e PIPELINE_LABEL=%PIPELINE_LABEL% ^
+          %CURL_IMAGE% sh -c "set -e; ts=$(date +%%s); cur=$(curl -s http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/failure | awk '/^deployments_failed_total[[:space:]]/ {print $2}' | tail -n 1); [ -z \\"$cur\\" ] && cur=0; v=$((cur+1)); printf 'deployments_failed_total %s\\n' \\"$v\\" > /tmp/m.txt; printf 'deployments_failed_timestamp_seconds %s\\n' \\"$ts\\" >> /tmp/m.txt; printf 'last_failed_build_number %s\\n' \\"$BUILD_NUMBER\\" >> /tmp/m.txt; curl -sS --fail -X POST --data-binary @/tmp/m.txt http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/failure"
+        if %errorlevel% neq 0 (echo ERROR: Pushgateway push failed (failure) & exit /b 1)
+      '''
+    }
 
-      docker run --rm --network %NET% ^
-        -e BUILD_NUMBER=%BUILD_NUMBER% ^
-        -e PIPELINE_LABEL=%PIPELINE_LABEL% ^
-        %CURL_IMAGE% sh -c "set -e; ts=$(date +%%s); cur=$(curl -s http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/failure | awk '/^deployments_failed_total[[:space:]]/ {print $2}' | tail -n 1); [ -z \\"$cur\\" ] && cur=0; v=$((cur+1)); printf 'deployments_failed_total %s\\n' \\"$v\\" > /tmp/m.txt; printf 'deployments_failed_timestamp_seconds %s\\n' \\"$ts\\" >> /tmp/m.txt; printf 'last_failed_build_number %s\\n' \\"$BUILD_NUMBER\\" >> /tmp/m.txt; curl -sS --fail -X POST --data-binary @/tmp/m.txt http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/failure"
-      if %errorlevel% neq 0 (echo ERROR: Pushgateway push failed (failure) & exit /b 1)
-    '''
-  }
+    always {
+      archiveArtifacts artifacts: 'compose_logs.txt, test-results/*.xml', allowEmptyArchive: true
+    }
 
-  always {
-    // Evidence for your dissertation
-    archiveArtifacts artifacts: 'compose_logs.txt, test-results/*.xml', allowEmptyArchive: true
-  }
-
-  cleanup {
-    script {
-      if (params.KEEP_STACK) {
-        echo 'KEEP_STACK=true, leaving stack running for Grafana/Prometheus inspection.'
-        echo "Grafana:      http://127.0.0.1:13001"
-        echo "Prometheus:   http://127.0.0.1:19090"
-        echo "Pushgateway:  http://127.0.0.1:19091"
-        echo 'Quick check:'
-        echo '  curl.exe -s http://127.0.0.1:19091/metrics | findstr deployments_'
-      } else {
-        echo 'KEEP_STACK=false, cleaning up Compose stack...'
-        bat '''
-          cd /d "%WORKSPACE%"
-          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" down --remove-orphans || exit /b 0
-        '''
+    cleanup {
+      script {
+        if (params.KEEP_STACK) {
+          echo 'KEEP_STACK=true, leaving stack running for Grafana/Prometheus inspection.'
+          echo "Grafana:      http://127.0.0.1:13001"
+          echo "Prometheus:   http://127.0.0.1:19090"
+          echo "Pushgateway:  http://127.0.0.1:19091"
+          echo 'Quick check:'
+          echo '  curl.exe -s http://127.0.0.1:19091/metrics | findstr deployments_'
+        } else {
+          echo 'KEEP_STACK=false, cleaning up Compose stack...'
+          bat '''
+            cd /d "%WORKSPACE%"
+            docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" down --remove-orphans || exit /b 0
+          '''
+        }
       }
     }
   }
