@@ -32,8 +32,13 @@ services:
 
   pushgateway:
     image: prom/pushgateway:latest
+    command:
+      - --persistence.file=/data/pushgateway.db
+      - --persistence.interval=1m
     ports:
       - "127.0.0.1:${PUSHGATEWAY_HOST_PORT:-19091}:9091"
+    volumes:
+      - pushgateway-data:/data
     networks:
       - monitoring
     restart: unless-stopped
@@ -64,6 +69,8 @@ services:
     command: --config.file=/etc/alertmanager/alertmanager.yml --storage.path=/alertmanager
     volumes:
       - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      # Optional persistence (uncomment if you want Alertmanager silences/notifications history to persist)
+      - alertmanager-data:/alertmanager
     ports:
       - "127.0.0.1:${ALERTMANAGER_HOST_PORT:-19093}:9093"
     networks:
@@ -89,10 +96,11 @@ services:
 
 networks:
   monitoring:
-    # BEST OPTION (no warnings): let Compose create its own network per project
     driver: bridge
 
 volumes:
   model-store:
   grafana-data:
   prometheus-data:
+  pushgateway-data:
+  alertmanager-data:
