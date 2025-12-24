@@ -250,17 +250,20 @@ pipeline {
         cd /d "%WORKSPACE%"
         set NET=%COMPOSE_PROJECT_NAME%_monitoring
 
-        docker run --rm --network %NET% %CURL_IMAGE% sh -c "
-          ts=$(date +%s);
-          v=${BUILD_NUMBER};
+        docker run --rm --network %NET% ^
+          -e BUILD_NUMBER=%BUILD_NUMBER% ^
+          -e PIPELINE_LABEL=%PIPELINE_LABEL% ^
+          %CURL_IMAGE% sh -c "
+            ts=$(date +%%s);
+            v=$BUILD_NUMBER;
 
-          printf 'deployments_total{pipeline=\"%PIPELINE_LABEL%\"} %s\\n' \"$v\" > /tmp/m.txt
-          printf 'deployments_success_timestamp_seconds{pipeline=\"%PIPELINE_LABEL%\"} %s\\n' \"$ts\" >> /tmp/m.txt
+            printf 'deployments_total{pipeline=\\"%s\\"} %s\\n' \\"$PIPELINE_LABEL\\" \\"$v\\" > /tmp/m.txt
+            printf 'deployments_success_timestamp_seconds{pipeline=\\"%s\\"} %s\\n' \\"$PIPELINE_LABEL\\" \\"$ts\\" >> /tmp/m.txt
 
-          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST --data-binary @/tmp/m.txt http://pushgateway:9091/metrics/job/deployments/instance/success);
-          echo Pushgateway HTTP $code;
-          test \"$code\" = \"202\" -o \"$code\" = \"200\"
-        "
+            code=$(curl -sS -o /dev/null -w '%%{http_code}' -X POST --data-binary @/tmp/m.txt http://pushgateway:9091/metrics/job/deployments/instance/success);
+            echo Pushgateway HTTP $code;
+            test \\"$code\\" = \\"202\\" -o \\"$code\\" = \\"200\\"
+          "
         if %errorlevel% neq 0 (echo ERROR: Pushgateway push failed (success) & exit /b 1)
       '''
     }
@@ -271,17 +274,20 @@ pipeline {
         cd /d "%WORKSPACE%"
         set NET=%COMPOSE_PROJECT_NAME%_monitoring
 
-        docker run --rm --network %NET% %CURL_IMAGE% sh -c "
-          ts=$(date +%s);
-          v=${BUILD_NUMBER};
+        docker run --rm --network %NET% ^
+          -e BUILD_NUMBER=%BUILD_NUMBER% ^
+          -e PIPELINE_LABEL=%PIPELINE_LABEL% ^
+          %CURL_IMAGE% sh -c "
+            ts=$(date +%%s);
+            v=$BUILD_NUMBER;
 
-          printf 'deployments_failed_total{pipeline=\"%PIPELINE_LABEL%\"} %s\\n' \"$v\" > /tmp/m.txt
-          printf 'deployments_failed_timestamp_seconds{pipeline=\"%PIPELINE_LABEL%\"} %s\\n' \"$ts\" >> /tmp/m.txt
+            printf 'deployments_failed_total{pipeline=\\"%s\\"} %s\\n' \\"$PIPELINE_LABEL\\" \\"$v\\" > /tmp/m.txt
+            printf 'deployments_failed_timestamp_seconds{pipeline=\\"%s\\"} %s\\n' \\"$PIPELINE_LABEL\\" \\"$ts\\" >> /tmp/m.txt
 
-          code=$(curl -sS -o /dev/null -w '%{http_code}' -X POST --data-binary @/tmp/m.txt http://pushgateway:9091/metrics/job/deployments/instance/failure);
-          echo Pushgateway HTTP $code;
-          test \"$code\" = \"202\" -o \"$code\" = \"200\"
-        "
+            code=$(curl -sS -o /dev/null -w '%%{http_code}' -X POST --data-binary @/tmp/m.txt http://pushgateway:9091/metrics/job/deployments/instance/failure);
+            echo Pushgateway HTTP $code;
+            test \\"$code\\" = \\"202\\" -o \\"$code\\" = \\"200\\"
+          "
         if %errorlevel% neq 0 (echo ERROR: Pushgateway push failed (failure) & exit /b 1)
       '''
     }
