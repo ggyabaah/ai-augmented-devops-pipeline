@@ -12,12 +12,17 @@ pipeline {
     booleanParam(
       name: 'INJECT_FAULT',
       defaultValue: false,
-      description: 'Simulate a faulty commit by forcing the pipeline to fail after the stack is up.'
+      description: 'Force a failure to simulate a faulty commit (used to test alerting).'
     )
     booleanParam(
       name: 'KEEP_STACK',
       defaultValue: true,
-      description: 'Leave Prometheus/Grafana/Pushgateway running after the build for inspection.'
+      description: 'Keep Prometheus/Grafana/Pushgateway running after the build for inspection.'
+    )
+    booleanParam(
+      name: 'RESET_STACK_FIRST',
+      defaultValue: false,
+      description: 'If true, bring the Compose stack down at the start (clean slate).'
     )
   }
 
@@ -36,7 +41,7 @@ pipeline {
     ENV_FILE             = '.env'
     CURL_IMAGE           = 'curlimages/curl:8.10.1'
 
-    // Pushgateway (host-mapped port from your docker ps output)
+    // Pushgateway (host-mapped port in your compose)
     PUSHGATEWAY_BASE_URL = 'http://127.0.0.1:19091'
     PIPELINE_LABEL       = 'ai-augmented-devops'
   }
@@ -139,7 +144,10 @@ pipeline {
       }
     }
 
-    stage('Compose Down (safe)') {
+    stage('Compose Down (optional clean slate)') {
+      when {
+        expression { return params.RESET_STACK_FIRST }
+      }
       steps {
         bat '''
           cd /d "%WORKSPACE%"
@@ -185,28 +193,22 @@ pipeline {
 
     stage('Fault Injection Check (simulate faulty commit)') {
       steps {
-        bat '''
-          cd /d "%WORKSPACE%"
-          echo === Fault Injection Check ===
-          echo INJECT_FAULT param: %INJECT_FAULT%
+        script {
+          // Option 1: Jenkins parameter
+          if (params.INJECT_FAULT) {
+            error('Fault injection enabled (INJECT_FAULT=true). Forcing pipeline failure to simulate faulty commit.')
+          }
 
-          rem Option 1: Jenkins parameter
-          if /I "%INJECT_FAULT%"=="true" (
-            echo Fault injection enabled via parameter. Forcing failure now.
-            exit /b 1
-          )
+          // Option 2: Repo flag file
+          if (fileExists('fault.flag')) {
+            def txt = readFile('fault.flag').trim().toLowerCase()
+            if (txt.contains('fail_deploy=true')) {
+              error('fault.flag contains FAIL_DEPLOY=true. Forcing pipeline failure to simulate faulty commit.')
+            }
+          }
 
-          rem Option 2: Repo file flag (fault.flag containing FAIL_DEPLOY=true)
-          if exist "fault.flag" (
-            findstr /I "FAIL_DEPLOY=true" fault.flag >nul 2>&1
-            if %errorlevel%==0 (
-              echo fault.flag detected with FAIL_DEPLOY=true. Forcing failure now.
-              exit /b 1
-            )
-          )
-
-          echo No fault injection requested. Continuing.
-        '''
+          echo 'No fault injection requested. Continuing.'
+        }
       }
     }
 
@@ -253,7 +255,10 @@ pipeline {
     always {
       script {
         if (params.KEEP_STACK) {
-          echo 'KEEP_STACK=true, leaving Compose stack running for Grafana/Prometheus inspection.'
+          echo 'KEEP_STACK=true, leaving stack running for Grafana/Prometheus inspection.'
+          echo "Grafana:      http://127.0.0.1:13001"
+          echo "Prometheus:   http://127.0.0.1:19090"
+          echo "Pushgateway:  http://127.0.0.1:19091"
         } else {
           echo 'KEEP_STACK=false, cleaning up Compose stack...'
           bat '''
