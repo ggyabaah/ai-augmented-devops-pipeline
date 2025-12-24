@@ -246,7 +246,7 @@ pipeline {
     }
   }
 
-  post {
+post {
 
     // We keep pipeline as a grouping label in the URL to avoid quoting issues.
     // We now maintain TRUE counters in Pushgateway:
@@ -254,90 +254,54 @@ pipeline {
     // - deployments_failed_total increments by 1 on each FAILURE
     // We also push timestamps + last build numbers for traceability.
 
-    success {
-      echo 'Build SUCCESS: incrementing deployments_total and pushing timestamp (via Docker network)...'
-      bat '''
-        cd /d "%WORKSPACE%"
-        set NET=%COMPOSE_PROJECT_NAME%_monitoring
+  success {
+    echo 'Build SUCCESS: incrementing deployments_total and pushing timestamp (via Docker network)...'
+    bat '''
+      cd /d "%WORKSPACE%"
+      set NET=%COMPOSE_PROJECT_NAME%_monitoring
 
-        docker run --rm --network %NET% ^
-          -e BUILD_NUMBER=%BUILD_NUMBER% ^
-          -e PIPELINE_LABEL=%PIPELINE_LABEL% ^
-          %CURL_IMAGE% sh -c "
-            set -e
-            ts=$(date +%%s)
+      docker run --rm --network %NET% ^
+        -e BUILD_NUMBER=%BUILD_NUMBER% ^
+        -e PIPELINE_LABEL=%PIPELINE_LABEL% ^
+        %CURL_IMAGE% sh -c "set -e; ts=$(date +%%s); cur=$(curl -s http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/success | awk '/^deployments_total[[:space:]]/ {print $2}' | tail -n 1); [ -z \\"$cur\\" ] && cur=0; v=$((cur+1)); printf 'deployments_total %s\\n' \\"$v\\" > /tmp/m.txt; printf 'deployments_success_timestamp_seconds %s\\n' \\"$ts\\" >> /tmp/m.txt; printf 'last_successful_build_number %s\\n' \\"$BUILD_NUMBER\\" >> /tmp/m.txt; curl -sS --fail -X POST --data-binary @/tmp/m.txt http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/success"
+      if %errorlevel% neq 0 (echo ERROR: Pushgateway push failed (success) & exit /b 1)
+    '''
+  }
 
-            cur=$(curl -s http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/success \
-              | awk '/^deployments_total[[:space:]]/ {print $2}' | tail -n 1)
-            [ -z \\"$cur\\" ] && cur=0
+  failure {
+    echo 'Build FAILURE: incrementing deployments_failed_total and pushing timestamp (via Docker network)...'
+    bat '''
+      cd /d "%WORKSPACE%"
+      set NET=%COMPOSE_PROJECT_NAME%_monitoring
 
-            v=$((cur+1))
+      docker run --rm --network %NET% ^
+        -e BUILD_NUMBER=%BUILD_NUMBER% ^
+        -e PIPELINE_LABEL=%PIPELINE_LABEL% ^
+        %CURL_IMAGE% sh -c "set -e; ts=$(date +%%s); cur=$(curl -s http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/failure | awk '/^deployments_failed_total[[:space:]]/ {print $2}' | tail -n 1); [ -z \\"$cur\\" ] && cur=0; v=$((cur+1)); printf 'deployments_failed_total %s\\n' \\"$v\\" > /tmp/m.txt; printf 'deployments_failed_timestamp_seconds %s\\n' \\"$ts\\" >> /tmp/m.txt; printf 'last_failed_build_number %s\\n' \\"$BUILD_NUMBER\\" >> /tmp/m.txt; curl -sS --fail -X POST --data-binary @/tmp/m.txt http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/failure"
+      if %errorlevel% neq 0 (echo ERROR: Pushgateway push failed (failure) & exit /b 1)
+    '''
+  }
 
-            cat > /tmp/m.txt <<EOF
-deployments_total $v
-deployments_success_timestamp_seconds $ts
-last_successful_build_number $BUILD_NUMBER
-EOF
+  always {
+    // Evidence for your dissertation
+    archiveArtifacts artifacts: 'compose_logs.txt, test-results/*.xml', allowEmptyArchive: true
+  }
 
-            curl -sS --fail -X POST --data-binary @/tmp/m.txt \
-              http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/success
-          "
-        if %errorlevel% neq 0 (echo ERROR: Pushgateway push failed (success) & exit /b 1)
-      '''
-    }
-
-    failure {
-      echo 'Build FAILURE: incrementing deployments_failed_total and pushing timestamp (via Docker network)...'
-      bat '''
-        cd /d "%WORKSPACE%"
-        set NET=%COMPOSE_PROJECT_NAME%_monitoring
-
-        docker run --rm --network %NET% ^
-          -e BUILD_NUMBER=%BUILD_NUMBER% ^
-          -e PIPELINE_LABEL=%PIPELINE_LABEL% ^
-          %CURL_IMAGE% sh -c "
-            set -e
-            ts=$(date +%%s)
-
-            cur=$(curl -s http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/failure \
-              | awk '/^deployments_failed_total[[:space:]]/ {print $2}' | tail -n 1)
-            [ -z \\"$cur\\" ] && cur=0
-
-            v=$((cur+1))
-
-            cat > /tmp/m.txt <<EOF
-deployments_failed_total $v
-deployments_failed_timestamp_seconds $ts
-last_failed_build_number $BUILD_NUMBER
-EOF
-
-            curl -sS --fail -X POST --data-binary @/tmp/m.txt \
-              http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/failure
-          "
-        if %errorlevel% neq 0 (echo ERROR: Pushgateway push failed (failure) & exit /b 1)
-      '''
-    }
-
-    always {
-      // Keep evidence for your dissertation
-      archiveArtifacts artifacts: 'compose_logs.txt, test-results/*.xml', allowEmptyArchive: true
-
-      script {
-        if (params.KEEP_STACK) {
-          echo 'KEEP_STACK=true, leaving stack running for Grafana/Prometheus inspection.'
-          echo "Grafana:      http://127.0.0.1:13001"
-          echo "Prometheus:   http://127.0.0.1:19090"
-          echo "Pushgateway:  http://127.0.0.1:19091"
-
-          echo 'Quick check: after the build, run:'
-          echo '  curl.exe -s http://127.0.0.1:19091/metrics | findstr deployments_'
-        } else {
-          echo 'KEEP_STACK=false, cleaning up Compose stack...'
-          bat '''
-            cd /d "%WORKSPACE%"
-            docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" down --remove-orphans || exit /b 0
-          '''
-        }
+  cleanup {
+    script {
+      if (params.KEEP_STACK) {
+        echo 'KEEP_STACK=true, leaving stack running for Grafana/Prometheus inspection.'
+        echo "Grafana:      http://127.0.0.1:13001"
+        echo "Prometheus:   http://127.0.0.1:19090"
+        echo "Pushgateway:  http://127.0.0.1:19091"
+        echo 'Quick check:'
+        echo '  curl.exe -s http://127.0.0.1:19091/metrics | findstr deployments_'
+      } else {
+        echo 'KEEP_STACK=false, cleaning up Compose stack...'
+        bat '''
+          cd /d "%WORKSPACE%"
+          docker compose --env-file "%ENV_FILE%" -p "%COMPOSE_PROJECT_NAME%" down --remove-orphans || exit /b 0
+        '''
       }
     }
   }
