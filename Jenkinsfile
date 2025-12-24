@@ -213,7 +213,7 @@ pipeline {
           if (fileExists('fault.flag')) {
             def txt = readFile('fault.flag').trim().toLowerCase()
             if (txt.contains('fail_deploy=true')) {
-              error('fault.flag contains FAIL_DEPLOY=true. Forcing pipeline failure to simulate faulty commit.')
+              error('fault.flag contains fail_deploy=true. Forcing pipeline failure to simulate faulty commit')
             }
           }
 
