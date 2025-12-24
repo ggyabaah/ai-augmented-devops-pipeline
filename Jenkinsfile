@@ -244,8 +244,13 @@ pipeline {
 
   post {
 
+    // IMPORTANT:
+    // We avoid label quoting issues by putting pipeline as a grouping label in the URL.
+    // That means the metric body is simple: "deployments_total 123"
+    // Pushgateway will expose it as: deployments_total{job="deployments",pipeline="ai-augmented-devops",instance="success"} 123
+
     success {
-      echo 'Build SUCCESS: pushing success metrics to Pushgateway (via Docker network)...'
+      echo 'Build SUCCESS: pushing success metrics to Pushgateway (via Docker network, URL grouping labels)...'
       bat '''
         cd /d "%WORKSPACE%"
         set NET=%COMPOSE_PROJECT_NAME%_monitoring
@@ -257,19 +262,18 @@ pipeline {
             ts=$(date +%%s);
             v=$BUILD_NUMBER;
 
-            printf 'deployments_total{pipeline=\\"%s\\"} %s\\n' \\"$PIPELINE_LABEL\\" \\"$v\\" > /tmp/m.txt
-            printf 'deployments_success_timestamp_seconds{pipeline=\\"%s\\"} %s\\n' \\"$PIPELINE_LABEL\\" \\"$ts\\" >> /tmp/m.txt
+            printf 'deployments_total %s\\n' \\"$v\\" > /tmp/m.txt
+            printf 'deployments_success_timestamp_seconds %s\\n' \\"$ts\\" >> /tmp/m.txt
 
-            code=$(curl -sS -o /dev/null -w '%%{http_code}' -X POST --data-binary @/tmp/m.txt http://pushgateway:9091/metrics/job/deployments/instance/success);
-            echo Pushgateway HTTP $code;
-            test \\"$code\\" = \\"202\\" -o \\"$code\\" = \\"200\\"
+            curl -sS --fail -X POST --data-binary @/tmp/m.txt \
+              http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/success
           "
         if %errorlevel% neq 0 (echo ERROR: Pushgateway push failed (success) & exit /b 1)
       '''
     }
 
     failure {
-      echo 'Build FAILURE: pushing failure metrics to Pushgateway (via Docker network)...'
+      echo 'Build FAILURE: pushing failure metrics to Pushgateway (via Docker network, URL grouping labels)...'
       bat '''
         cd /d "%WORKSPACE%"
         set NET=%COMPOSE_PROJECT_NAME%_monitoring
@@ -281,12 +285,11 @@ pipeline {
             ts=$(date +%%s);
             v=$BUILD_NUMBER;
 
-            printf 'deployments_failed_total{pipeline=\\"%s\\"} %s\\n' \\"$PIPELINE_LABEL\\" \\"$v\\" > /tmp/m.txt
-            printf 'deployments_failed_timestamp_seconds{pipeline=\\"%s\\"} %s\\n' \\"$PIPELINE_LABEL\\" \\"$ts\\" >> /tmp/m.txt
+            printf 'deployments_failed_total %s\\n' \\"$v\\" > /tmp/m.txt
+            printf 'deployments_failed_timestamp_seconds %s\\n' \\"$ts\\" >> /tmp/m.txt
 
-            code=$(curl -sS -o /dev/null -w '%%{http_code}' -X POST --data-binary @/tmp/m.txt http://pushgateway:9091/metrics/job/deployments/instance/failure);
-            echo Pushgateway HTTP $code;
-            test \\"$code\\" = \\"202\\" -o \\"$code\\" = \\"200\\"
+            curl -sS --fail -X POST --data-binary @/tmp/m.txt \
+              http://pushgateway:9091/metrics/job/deployments/pipeline/$PIPELINE_LABEL/instance/failure
           "
         if %errorlevel% neq 0 (echo ERROR: Pushgateway push failed (failure) & exit /b 1)
       '''
@@ -299,6 +302,9 @@ pipeline {
           echo "Grafana:      http://127.0.0.1:13001"
           echo "Prometheus:   http://127.0.0.1:19090"
           echo "Pushgateway:  http://127.0.0.1:19091"
+
+          echo 'Quick check: after the build, run:'
+          echo '  curl.exe -s http://127.0.0.1:19091/metrics | findstr deployments_'
         } else {
           echo 'KEEP_STACK=false, cleaning up Compose stack...'
           bat '''
