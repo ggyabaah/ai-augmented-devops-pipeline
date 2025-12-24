@@ -235,19 +235,25 @@ pipeline {
   post {
 
     success {
-      echo 'Build SUCCESS: pushing deployments_total to Pushgateway...'
+      echo 'Build SUCCESS: pushing success metrics to Pushgateway...'
       bat '''
         powershell -NoProfile -Command ^
-          "$body = 'deployments_total{pipeline=\"%PIPELINE_LABEL%\"} 1`n'; ^
+          "$ts = [int][DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); ^
+           $v  = [int]$env:BUILD_NUMBER; ^
+           $body  = 'deployments_total{pipeline=\"%PIPELINE_LABEL%\"} ' + $v + \"`n\"; ^
+           $body += 'deployments_success_timestamp_seconds{pipeline=\"%PIPELINE_LABEL%\"} ' + $ts + \"`n\"; ^
            Invoke-WebRequest -Uri '%PUSHGATEWAY_BASE_URL%/metrics/job/deployments/instance/success' -Method POST -ContentType 'text/plain' -Body $body | Out-Null"
       '''
     }
 
     failure {
-      echo 'Build FAILURE: pushing deployments_failed_total to Pushgateway...'
+      echo 'Build FAILURE: pushing failure metrics to Pushgateway...'
       bat '''
         powershell -NoProfile -Command ^
-          "$body = 'deployments_failed_total{pipeline=\"%PIPELINE_LABEL%\"} 1`n'; ^
+          "$ts = [int][DateTimeOffset]::UtcNow.ToUnixTimeSeconds(); ^
+           $v  = [int]$env:BUILD_NUMBER; ^
+           $body  = 'deployments_failed_total{pipeline=\"%PIPELINE_LABEL%\"} ' + $v + \"`n\"; ^
+           $body += 'deployments_failed_timestamp_seconds{pipeline=\"%PIPELINE_LABEL%\"} ' + $ts + \"`n\"; ^
            Invoke-WebRequest -Uri '%PUSHGATEWAY_BASE_URL%/metrics/job/deployments/instance/failure' -Method POST -ContentType 'text/plain' -Body $body | Out-Null"
       '''
     }
